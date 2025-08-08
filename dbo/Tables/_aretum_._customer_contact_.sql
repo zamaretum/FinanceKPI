@@ -1,0 +1,43 @@
+CREATE TABLE [dbo].["aretum"."customer_contact"] (
+    [customer_contact_key]   BIGINT          NULL,
+    [customer_key]           BIGINT          NULL,
+    [first_name]             NVARCHAR (50)   NULL,
+    [last_name]              NVARCHAR (50)   NULL,
+    [middle_initial]         NVARCHAR (1)    NULL,
+    [suffix]                 NVARCHAR (10)   NULL,
+    [salutation]             NVARCHAR (120)  NULL,
+    [title]                  NVARCHAR (240)  NULL,
+    [active]                 NVARCHAR (1)    NULL,
+    [default_bill_to]        NVARCHAR (1)    NULL,
+    [default_ship_to]        NVARCHAR (1)    NULL,
+    [default_remit_to]       NVARCHAR (1)    NULL,
+    [comments]               NVARCHAR (2000) NULL,
+    [created_timestamp]      DATETIME2 (6)   NULL,
+    [created_by]             BIGINT          NULL,
+    [last_updated_timestamp] DATETIME2 (6)   NULL,
+    [last_updated_by]        BIGINT          NULL,
+    [user01]                 NVARCHAR (128)  NULL,
+    [user02]                 NVARCHAR (128)  NULL,
+    [user03]                 NVARCHAR (128)  NULL,
+    [user04]                 NVARCHAR (128)  NULL,
+    [user05]                 NVARCHAR (128)  NULL,
+    [user06]                 NVARCHAR (128)  NULL,
+    [user07]                 NVARCHAR (128)  NULL,
+    [user08]                 NVARCHAR (128)  NULL,
+    [user09]                 NVARCHAR (128)  NULL,
+    [user10]                 NVARCHAR (128)  NULL,
+    [user11]                 NVARCHAR (128)  NULL,
+    [user12]                 NVARCHAR (128)  NULL,
+    [user13]                 NVARCHAR (128)  NULL,
+    [user14]                 NVARCHAR (128)  NULL,
+    [user15]                 NVARCHAR (128)  NULL,
+    [user16]                 NVARCHAR (128)  NULL,
+    [user17]                 NVARCHAR (128)  NULL,
+    [user18]                 NVARCHAR (128)  NULL,
+    [user19]                 NVARCHAR (128)  NULL,
+    [user20]                 NVARCHAR (128)  NULL
+);
+
+
+GO
+

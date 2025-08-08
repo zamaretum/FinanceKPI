@@ -1,0 +1,13 @@
+CREATE TABLE [dbo].["SYS"."GEOGRAPHY_COLUMNS"] (
+    [F_TABLE_CATALOG]   NVARCHAR (256) NULL,
+    [F_TABLE_SCHEMA]    NVARCHAR (256) NULL,
+    [F_TABLE_NAME]      NVARCHAR (256) NULL,
+    [F_GEOMETRY_COLUMN] NVARCHAR (256) NULL,
+    [COORD_DIMENSION]   INT            NULL,
+    [SRID]              INT            NULL,
+    [TYPE]              NVARCHAR (30)  NULL
+);
+
+
+GO
+

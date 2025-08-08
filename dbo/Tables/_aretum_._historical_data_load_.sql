@@ -1,0 +1,40 @@
+CREATE TABLE [dbo].["aretum"."historical_data_load"] (
+    [historical_data_load_key]     BIGINT          NULL,
+    [file_name]                    NVARCHAR (256)  NULL,
+    [legal_entity_key]             BIGINT          NULL,
+    [labor_cost_offset_acct_key]   BIGINT          NULL,
+    [exp_cost_offset_acct_key]     BIGINT          NULL,
+    [cost_offset_org_key]          BIGINT          NULL,
+    [preprocess_status]            NVARCHAR (1)    NULL,
+    [process_cost_status]          NVARCHAR (1)    NULL,
+    [process_billing_status]       NVARCHAR (1)    NULL,
+    [process_invoice_status]       NVARCHAR (1)    NULL,
+    [cost_amt]                     DECIMAL (20, 4) NULL,
+    [cost_offset_amt]              DECIMAL (20, 4) NULL,
+    [unbilled_amt]                 DECIMAL (20, 4) NULL,
+    [deferred_rev_amt]             DECIMAL (20, 4) NULL,
+    [recog_rev_amt]                DECIMAL (20, 4) NULL,
+    [billed_amt]                   DECIMAL (20, 4) NULL,
+    [billed_writeoff_amt]          DECIMAL (20, 4) NULL,
+    [processed_by]                 BIGINT          NULL,
+    [processed_timestamp]          DATETIME2 (6)   NULL,
+    [attachment_key]               BIGINT          NULL,
+    [cost_currency]                BIGINT          NULL,
+    [billing_currency]             BIGINT          NULL,
+    [local_cost_amt]               DECIMAL (20, 4) NULL,
+    [instance_cost_amt]            DECIMAL (20, 4) NULL,
+    [local_unbilled_amt]           DECIMAL (20, 4) NULL,
+    [instance_unbilled_amt]        DECIMAL (20, 4) NULL,
+    [local_deferred_rev_amt]       DECIMAL (20, 4) NULL,
+    [instance_deferred_rev_amt]    DECIMAL (20, 4) NULL,
+    [local_recog_rev_amt]          DECIMAL (20, 4) NULL,
+    [instance_recog_rev_amt]       DECIMAL (20, 4) NULL,
+    [local_billed_amt]             DECIMAL (20, 4) NULL,
+    [instance_billed_amt]          DECIMAL (20, 4) NULL,
+    [local_billed_writeoff_amt]    DECIMAL (20, 4) NULL,
+    [instance_billed_writeoff_amt] DECIMAL (20, 4) NULL
+);
+
+
+GO
+

@@ -1,0 +1,43 @@
+CREATE TABLE [dbo].["aretum"."vendor_org"] (
+    [vendor_org_key]              BIGINT          NULL,
+    [customer_key]                BIGINT          NULL,
+    [legal_entity_key]            BIGINT          NULL,
+    [payment_term_key]            BIGINT          NULL,
+    [active]                      NVARCHAR (1)    NULL,
+    [account_number]              NVARCHAR (40)   NULL,
+    [separate_payment]            NVARCHAR (1)    NULL,
+    [payee_name]                  NVARCHAR (255)  NULL,
+    [payment_on_hold]             NVARCHAR (1)    NULL,
+    [hold_reason]                 NVARCHAR (255)  NULL,
+    [user01]                      NVARCHAR (128)  NULL,
+    [user02]                      NVARCHAR (128)  NULL,
+    [user03]                      NVARCHAR (128)  NULL,
+    [user04]                      NVARCHAR (128)  NULL,
+    [user05]                      NVARCHAR (128)  NULL,
+    [user06]                      NVARCHAR (128)  NULL,
+    [user07]                      NVARCHAR (128)  NULL,
+    [user08]                      NVARCHAR (128)  NULL,
+    [user09]                      NVARCHAR (128)  NULL,
+    [user10]                      NVARCHAR (128)  NULL,
+    [user11]                      NVARCHAR (128)  NULL,
+    [user12]                      NVARCHAR (128)  NULL,
+    [user13]                      NVARCHAR (128)  NULL,
+    [user14]                      NVARCHAR (128)  NULL,
+    [user15]                      NVARCHAR (128)  NULL,
+    [user16]                      NVARCHAR (128)  NULL,
+    [user17]                      NVARCHAR (128)  NULL,
+    [user18]                      NVARCHAR (128)  NULL,
+    [user19]                      NVARCHAR (128)  NULL,
+    [user20]                      NVARCHAR (128)  NULL,
+    [require_activation_approver] NVARCHAR (1)    NULL,
+    [activation_approver_key]     BIGINT          NULL,
+    [vendor_invoice_format_key]   BIGINT          NULL,
+    [vendor_invoice_memo]         NVARCHAR (2000) NULL,
+    [hold_dispute]                NVARCHAR (1)    NULL,
+    [hold_pwp]                    NVARCHAR (1)    NULL,
+    [hold_other]                  NVARCHAR (1)    NULL
+);
+
+
+GO
+

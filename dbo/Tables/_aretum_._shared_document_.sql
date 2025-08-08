@@ -1,0 +1,40 @@
+CREATE TABLE [dbo].["aretum"."shared_document"] (
+    [attachment_key]         BIGINT          NULL,
+    [legal_entity_key]       BIGINT          NULL,
+    [document_org_key]       BIGINT          NULL,
+    [document_number]        NVARCHAR (15)   NULL,
+    [description]            NVARCHAR (128)  NULL,
+    [comments]               NVARCHAR (2000) NULL,
+    [created_by]             BIGINT          NULL,
+    [last_updated_by]        BIGINT          NULL,
+    [created_timestamp]      DATETIME2 (6)   NULL,
+    [last_updated_timestamp] DATETIME2 (6)   NULL,
+    [project_key]            BIGINT          NULL,
+    [customer_key]           BIGINT          NULL,
+    [vendor_key]             BIGINT          NULL,
+    [organization_key]       BIGINT          NULL,
+    [user01]                 NVARCHAR (128)  NULL,
+    [user02]                 NVARCHAR (128)  NULL,
+    [user03]                 NVARCHAR (128)  NULL,
+    [user04]                 NVARCHAR (128)  NULL,
+    [user05]                 NVARCHAR (128)  NULL,
+    [user06]                 NVARCHAR (128)  NULL,
+    [user07]                 NVARCHAR (128)  NULL,
+    [user08]                 NVARCHAR (128)  NULL,
+    [user09]                 NVARCHAR (128)  NULL,
+    [user10]                 NVARCHAR (128)  NULL,
+    [user11]                 NVARCHAR (128)  NULL,
+    [user12]                 NVARCHAR (128)  NULL,
+    [user13]                 NVARCHAR (128)  NULL,
+    [user14]                 NVARCHAR (128)  NULL,
+    [user15]                 NVARCHAR (128)  NULL,
+    [user16]                 NVARCHAR (128)  NULL,
+    [user17]                 NVARCHAR (128)  NULL,
+    [user18]                 NVARCHAR (128)  NULL,
+    [user19]                 NVARCHAR (128)  NULL,
+    [user20]                 NVARCHAR (128)  NULL
+);
+
+
+GO
+

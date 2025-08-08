@@ -1,0 +1,42 @@
+CREATE TABLE [dbo].["aretum"."inventory_item"] (
+    [inventory_item_key]  BIGINT          NULL,
+    [item_key]            BIGINT          NULL,
+    [project_key]         BIGINT          NULL,
+    [task_key]            BIGINT          NULL,
+    [location_key]        BIGINT          NULL,
+    [as_of_date]          DATETIME2 (6)   NULL,
+    [order_cost_per_item] DECIMAL (17, 4) NULL,
+    [uom]                 NVARCHAR (50)   NULL,
+    [total_value]         DECIMAL (20, 4) NULL,
+    [quantity]            DECIMAL (15, 6) NULL,
+    [acquisition_date]    DATETIME2 (6)   NULL,
+    [expiration_date]     DATETIME2 (6)   NULL,
+    [serial_number]       NVARCHAR (50)   NULL,
+    [lot_number]          NVARCHAR (50)   NULL,
+    [manufacturer]        NVARCHAR (150)  NULL,
+    [vendor_key]          BIGINT          NULL,
+    [user01]              NVARCHAR (128)  NULL,
+    [user02]              NVARCHAR (128)  NULL,
+    [user03]              NVARCHAR (128)  NULL,
+    [user04]              NVARCHAR (128)  NULL,
+    [user05]              NVARCHAR (128)  NULL,
+    [user06]              NVARCHAR (128)  NULL,
+    [user07]              NVARCHAR (128)  NULL,
+    [user08]              NVARCHAR (128)  NULL,
+    [user09]              NVARCHAR (128)  NULL,
+    [user10]              NVARCHAR (128)  NULL,
+    [user11]              NVARCHAR (128)  NULL,
+    [user12]              NVARCHAR (128)  NULL,
+    [user13]              NVARCHAR (128)  NULL,
+    [user14]              NVARCHAR (128)  NULL,
+    [user15]              NVARCHAR (128)  NULL,
+    [user16]              NVARCHAR (128)  NULL,
+    [user17]              NVARCHAR (128)  NULL,
+    [user18]              NVARCHAR (128)  NULL,
+    [user19]              NVARCHAR (128)  NULL,
+    [user20]              NVARCHAR (128)  NULL
+);
+
+
+GO
+

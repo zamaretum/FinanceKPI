@@ -1,0 +1,42 @@
+CREATE TABLE [dbo].["aretum"."hdl_cost_detail"] (
+    [hdl_cost_detail_key]       BIGINT          NULL,
+    [historical_data_load_key]  BIGINT          NULL,
+    [project_key]               BIGINT          NULL,
+    [task_key]                  BIGINT          NULL,
+    [line_type]                 NVARCHAR (1)    NULL,
+    [description]               NVARCHAR (128)  NULL,
+    [labor_category_key]        BIGINT          NULL,
+    [expense_type_key]          BIGINT          NULL,
+    [person_key]                BIGINT          NULL,
+    [item_date]                 DATETIME2 (6)   NULL,
+    [cost_post_date]            DATETIME2 (6)   NULL,
+    [cost_post_acct_key]        BIGINT          NULL,
+    [cost_post_org_key]         BIGINT          NULL,
+    [cost_amt]                  DECIMAL (20, 4) NULL,
+    [bill_amt]                  DECIMAL (20, 4) NULL,
+    [quantity]                  DECIMAL (15, 6) NULL,
+    [cost_rate]                 DECIMAL (15, 5) NULL,
+    [bill_rate]                 DECIMAL (15, 5) NULL,
+    [prevent_billing]           NVARCHAR (1)    NULL,
+    [billing_only_hours]        NVARCHAR (1)    NULL,
+    [fin_document_detail_key]   BIGINT          NULL,
+    [cost_struct_labor_key]     BIGINT          NULL,
+    [cost_struct_odc_key]       BIGINT          NULL,
+    [project_type_key]          BIGINT          NULL,
+    [group_id]                  NVARCHAR (30)   NULL,
+    [fee_method_key]            BIGINT          NULL,
+    [cost_struct_pool_key]      BIGINT          NULL,
+    [cost_element_key]          BIGINT          NULL,
+    [cost_plus_post_detail_key] BIGINT          NULL,
+    [cost_currency]             BIGINT          NULL,
+    [billing_currency]          BIGINT          NULL,
+    [local_cost_amt]            DECIMAL (20, 4) NULL,
+    [instance_cost_amt]         DECIMAL (20, 4) NULL,
+    [local_bill_amt]            DECIMAL (20, 4) NULL,
+    [instance_bill_amt]         DECIMAL (20, 4) NULL,
+    [markup]                    DECIMAL (5, 2)  NULL
+);
+
+
+GO
+

@@ -1,0 +1,42 @@
+CREATE TABLE [dbo].["SYS"."Columns"] (
+    [VDBName]           NVARCHAR (255)  NULL,
+    [SchemaName]        NVARCHAR (512)  NULL,
+    [TableName]         NVARCHAR (1024) NULL,
+    [Name]              NVARCHAR (255)  NULL,
+    [Position]          INT             NULL,
+    [NameInSource]      NVARCHAR (255)  NULL,
+    [DataType]          NVARCHAR (100)  NULL,
+    [Scale]             INT             NULL,
+    [Length]            INT             NULL,
+    [IsLengthFixed]     NVARCHAR (5)    NULL,
+    [SupportsSelect]    NVARCHAR (5)    NULL,
+    [SupportsUpdates]   NVARCHAR (5)    NULL,
+    [IsCaseSensitive]   NVARCHAR (5)    NULL,
+    [IsSigned]          NVARCHAR (5)    NULL,
+    [IsCurrency]        NVARCHAR (5)    NULL,
+    [IsAutoIncremented] NVARCHAR (5)    NULL,
+    [NullType]          NVARCHAR (20)   NULL,
+    [MinRange]          NVARCHAR (50)   NULL,
+    [MaxRange]          NVARCHAR (50)   NULL,
+    [DistinctCount]     BIGINT          NULL,
+    [NullCount]         BIGINT          NULL,
+    [SearchType]        NVARCHAR (20)   NULL,
+    [Format]            NVARCHAR (255)  NULL,
+    [DefaultValue]      NVARCHAR (255)  NULL,
+    [JavaClass]         NVARCHAR (500)  NULL,
+    [Precision]         INT             NULL,
+    [CharOctetLength]   INT             NULL,
+    [Radix]             INT             NULL,
+    [UID]               NVARCHAR (50)   NULL,
+    [Description]       NVARCHAR (255)  NULL,
+    [NativeType]        NVARCHAR (100)  NULL,
+    [NativePrecision]   INT             NULL,
+    [NativeScale]       INT             NULL,
+    [NativeLength]      INT             NULL,
+    [TableUID]          NVARCHAR (50)   NULL,
+    [ColumnSize]        INT             NULL
+);
+
+
+GO
+
