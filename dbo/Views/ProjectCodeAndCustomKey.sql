@@ -1,18 +1,6 @@
---SELECT * FROM [dbo].[ProjectCodeAndCustomKey]( 3896,  3);
-
-
-CREATE OR ALTER FUNCTION [dbo].[ProjectCodeAndCustomKey]
-(
-    @person_key  INT,
-    @years_back  INT = 3
-)
-RETURNS TABLE
+CREATE OR ALTER VIEW [dbo].[ProjectCodeAndCustomKey]
 AS
-RETURN
 WITH
--- =========================
--- Shared CTEs (available to all subqueries below)
--- =========================
 all_fiscal_accounts AS (
     SELECT
         gl.account_key                  AS account_key,
@@ -36,7 +24,7 @@ all_fiscal_accounts AS (
     CROSS JOIN [dbo].["aretum"."fiscal_month"] fm
     JOIN [dbo].["aretum"."account"] a
         ON a.account_key = gl.account_key
-    WHERE fm.begin_date >= DATEADD(YEAR, -@years_back - 1, CAST(GETDATE() AS date))  -- 3 years back minus an extra 1 year in original logic
+    WHERE fm.begin_date >= DATEADD(YEAR, -4, CAST(GETDATE() AS date))   -- 3 years back minus 1 extra year
 ),
 re_accounts_cte AS (
     SELECT
@@ -92,7 +80,7 @@ totals AS (
         x.org_key                                    AS org_key,
         x.acc_type                                   AS account_type,
         fm_next.fiscal_month_key                     AS fiscal_month_key,
-        x.fiscal_month_key                            AS prev_fiscal_month_key,
+        x.fiscal_month_key                           AS prev_fiscal_month_key,
         SUM(amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)        AS amount,
         SUM(amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)        AS amount_c,
         SUM(local_amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)  AS local_amount,
@@ -155,7 +143,7 @@ totals AS (
         x.org_key,
         MAX(x.acc_type)                              AS account_type,
         fm_next.fiscal_month_key                     AS fiscal_month_key,
-        x.fiscal_month_key                            AS prev_fiscal_month_key,
+        x.fiscal_month_key                           AS prev_fiscal_month_key,
         CASE WHEN fm_next.period_number = 1 THEN 0 ELSE SUM(y.amount) END       AS amount,
         SUM(y.amount)                                AS amount_c,
         CASE WHEN fm_next.period_number = 1 THEN 0 ELSE SUM(y.local_amount) END AS local_amount,
@@ -204,18 +192,18 @@ intercompany_support AS (
 )
 
 SELECT
-    wrE19."Proj Code"              AS c0,
-    wrE9."CUSTOMER_KEY"            AS c1,
-    wrE9."CUSTOMER_CODE"           AS c2,
-    wrE9."CUSTOMER_NAME"           AS c3,
-    wrE6."Title"                   AS c4,
-    wrE20."Fiscal Year"            AS c5,
-    wrE19."General Ledger Key"     AS c6,
-    wrE20."Fiscal Month Key"       AS c7,
-    wrE6."Project Key"             AS c8,
-    wrE19."Organization Key"       AS c9,
-    wrE19."Fiscal Month Key"       AS c10,
-    wrE19."Project Key"            AS c11
+    wrE19."Proj Code"              AS "Proj Code",
+    wrE9."CUSTOMER_KEY"            AS "CUSTOMER_KEY",
+    wrE9."CUSTOMER_CODE"           AS "CUSTOMER_CODE",
+    wrE9."CUSTOMER_NAME"           AS "CUSTOMER_NAME",
+    wrE6."Title"                   AS "Title",
+    wrE20."Fiscal Year"            AS "Fiscal Year",
+    wrE19."General Ledger Key"     AS "General Ledger Key",
+    wrE20."Fiscal Month Key"       AS "Fiscal Month Key",
+    wrE6."Project Key"             AS "Project Key",
+    wrE19."Organization Key"       AS "Organization Key",
+    wrE19."Fiscal Month Key"       AS "Fiscal Month Key2",
+    wrE19."Project Key"            AS "Project Key2"
 FROM
 (
     SELECT
@@ -340,7 +328,7 @@ FROM
         JOIN [dbo].["aretum"."currency_code"] lcc
           ON lcc.currency_code_key = t.local_currency
         WHERE NOT (t_p.amount = 0 AND t.amount = 0)
-          AND fm.begin_date >= DATEADD(YEAR, -@years_back, CAST(GETDATE() AS date))
+          AND fm.begin_date >= DATEADD(YEAR, -3, CAST(GETDATE() AS date))
 
         UNION ALL
 
@@ -440,18 +428,18 @@ FROM
           ON ccc.currency_code_key = gl.transaction_currency
         JOIN [dbo].["aretum"."currency_code"]  lcc
           ON lcc.currency_code_key = gl.local_currency
-        WHERE fm.begin_date >= DATEADD(YEAR, -@years_back, CAST(GETDATE() AS date))
+        WHERE fm.begin_date >= DATEADD(YEAR, -3, CAST(GETDATE() AS date))
     ) x
     WHERE
-        (EXISTS (SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key = 1))
-        OR (EXISTS (SELECT 1 FROM [dbo].["aretum"."org_access_person"] WHERE person_key = @person_key AND role_key = 33 AND global_access = 'Y'))
+        (EXISTS (SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key = 1))
+        OR (EXISTS (SELECT 1 FROM [dbo].["aretum"."org_access_person"] WHERE person_key = 3896 AND role_key = 33 AND global_access = 'Y'))
         OR (
             x."Organization Key" IN (
                 SELECT v.customer_key
                 FROM [dbo].["aretum"."access_customer_view"] v
                 JOIN [dbo].["aretum"."org_access_person"] oap
                   ON oap.org_access_person_key = v.org_access_person_key
-                WHERE oap.person_key = @person_key
+                WHERE oap.person_key = 3896
                   AND oap.role_key = 33
                   AND oap.access_type = 2
                   AND v.legal_entity_ind = 'N'
@@ -463,7 +451,7 @@ FROM
                     FROM [dbo].["aretum"."access_customer_view"] v2
                     JOIN [dbo].["aretum"."org_access_person"] oap2
                       ON oap2.org_access_person_key = v2.org_access_person_key
-                    WHERE oap2.person_key = @person_key
+                    WHERE oap2.person_key = 3896
                       AND oap2.role_key = 33
                       AND oap2.access_type = 2
                       AND v2.legal_entity_ind = 'Y'
@@ -702,13 +690,13 @@ LEFT OUTER JOIN
         CASE proj.bill_rate_source WHEN 'P' THEN 'P - Person Bill Rate'
                                    WHEN 'L' THEN 'L - Labor Category Bill Rate' END AS "Proj Bill Rate Source",
         bt.code                                  AS "Proj Billing Type Code",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,37,39)) THEN proj.Exp_Bill_Budget ELSE NULL END AS "Proj Budget Exp Bill Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.exp_cost_burden_budget ELSE NULL END AS "Proj Budget Exp Burdened Cost",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.exp_cost_budget ELSE NULL END AS "Proj Budget Exp Cost Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,37,39)) THEN proj.Exp_Bill_Budget ELSE NULL END AS "Proj Budget Exp Bill Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.exp_cost_burden_budget ELSE NULL END AS "Proj Budget Exp Burdened Cost",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.exp_cost_budget ELSE NULL END AS "Proj Budget Exp Cost Amt",
         proj.hours_budget                        AS "Proj Budget Hours",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,37,39)) THEN proj.labor_bill_budget ELSE NULL END AS "Proj Budget Lab Bill Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.labor_cost_burden_budget ELSE NULL END AS "Proj Budget Lab Burd Cost",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.Labor_Cost_Budget ELSE NULL END AS "Proj Budget Lab Cost Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,37,39)) THEN proj.labor_bill_budget ELSE NULL END AS "Proj Budget Lab Bill Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.labor_cost_burden_budget ELSE NULL END AS "Proj Budget Lab Burd Cost",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.Labor_Cost_Budget ELSE NULL END AS "Proj Budget Lab Cost Amt",
         proj.project_code                        AS "Project Code",
         proj.purpose                             AS "Purpose",
         proj.completed_date                      AS "Completed Date",
@@ -720,16 +708,16 @@ LEFT OUTER JOIN
         pc.pay_code                              AS "Pay Code",
         proj.leave_balance                       AS "Leave Balance",
         proj.Enforce_Wbs_Dates                   AS "Enforce Wbs Dates",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,37,39)) THEN proj.exp_bill_est_tot ELSE NULL END AS "Proj Est Tot Exp Bill Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.exp_cost_est_tot ELSE NULL END AS "Proj Est Tot Exp Cost Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,37,39)) THEN proj.exp_bill_est_tot ELSE NULL END AS "Proj Est Tot Exp Bill Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.exp_cost_est_tot ELSE NULL END AS "Proj Est Tot Exp Cost Amt",
         proj.hours_est_tot                       AS "Proj Est Total",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,37,39)) THEN proj.labor_bill_est_tot ELSE NULL END AS "Proj Est Tot Lab Bill Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.labor_cost_est_tot ELSE NULL END AS "Proj Est Tot Lab Cost Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,37,39)) THEN proj.Exp_Bill_Etc ELSE NULL END AS "Proj ETC Exp Bill Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.exp_cost_etc ELSE NULL END AS "Proj ETC Exp Cost Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,37,39)) THEN proj.labor_bill_est_tot ELSE NULL END AS "Proj Est Tot Lab Bill Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.labor_cost_est_tot ELSE NULL END AS "Proj Est Tot Lab Cost Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,37,39)) THEN proj.Exp_Bill_Etc ELSE NULL END AS "Proj ETC Exp Bill Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.exp_cost_etc ELSE NULL END AS "Proj ETC Exp Cost Amt",
         proj.hours_etc                           AS "Proj ETC Hours",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,37,39)) THEN proj.labor_bill_etc ELSE NULL END AS "Proj ETC Lab Bill Amt",
-        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21,38,40)) THEN proj.labor_cost_etc ELSE NULL END AS "Proj ETC Labor Cost Amount",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,37,39)) THEN proj.labor_bill_etc ELSE NULL END AS "Proj ETC Lab Bill Amt",
+        CASE WHEN EXISTS(SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21,38,40)) THEN proj.labor_cost_etc ELSE NULL END AS "Proj ETC Labor Cost Amount",
         proj.er_task_required                    AS "ER Task Reqd",
         proj.Account_Number                      AS "Account Number",
         COALESCE(proj.funded_value, proj.orig_funded_value) AS "Funded Value",
@@ -864,12 +852,12 @@ LEFT OUTER JOIN
     LEFT JOIN [dbo].["aretum"."fee_method"] fm ON fm.fee_method_key = pf.fee_method_key
     LEFT JOIN [dbo].["aretum"."currency_code"] ooc ON ooc.currency_code_key = coo.currency_code_key
     WHERE
-        (EXISTS (SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = @person_key AND role_key IN (1,21)))
+        (EXISTS (SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = 3896 AND role_key IN (1,21)))
         OR EXISTS (
             SELECT 1
             FROM [dbo].["aretum"."project_controller"] pc
             WHERE pc.project_key = proj.project_key
-              AND pc.person_key = @person_key
+              AND pc.person_key = 3896
               AND pc.role_key IN (3, 14, 19, 20, 15, 18, 17)
         )
         OR EXISTS (
@@ -880,7 +868,7 @@ LEFT OUTER JOIN
              AND a.role_key = pc.role_key
             WHERE pc.project_key = proj.project_key
               AND pc.primary_ind = 'Y'
-              AND a.alternate_key = @person_key
+              AND a.alternate_key = 3896
               AND pc.role_key IN (3, 14, 19, 20, 15, 18, 17)
         )
         OR (
@@ -895,7 +883,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 20
                 )
@@ -904,7 +892,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 20
                 )
@@ -914,7 +902,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 20
                 )
@@ -923,7 +911,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 20
                 )
@@ -941,7 +929,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 19
                 )
@@ -950,7 +938,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 19
                 )
@@ -960,7 +948,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 19
                 )
@@ -969,7 +957,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 19
                 )
@@ -987,7 +975,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 14
                 )
@@ -996,7 +984,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 14
                 )
@@ -1006,7 +994,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 14
                 )
@@ -1015,7 +1003,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 14
                 )
@@ -1033,7 +1021,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 3
                 )
@@ -1042,7 +1030,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 3
                 )
@@ -1052,7 +1040,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 3
                 )
@@ -1061,7 +1049,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 3
                 )
@@ -1079,7 +1067,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 15
                 )
@@ -1088,7 +1076,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 15
                 )
@@ -1098,7 +1086,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 15
                 )
@@ -1107,7 +1095,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 15
                 )
@@ -1125,7 +1113,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 18
                 )
@@ -1134,7 +1122,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 18
                 )
@@ -1144,7 +1132,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 18
                 )
@@ -1153,7 +1141,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 18
                 )
@@ -1171,7 +1159,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 17
                 )
@@ -1180,7 +1168,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 1
                       AND oap.role_key = 17
                 )
@@ -1190,7 +1178,7 @@ LEFT OUTER JOIN
                     SELECT 1
                     FROM [dbo].["aretum"."org_access_person"] oap
                     WHERE oap.global_access = 'Y'
-                      AND oap.person_key = @person_key
+                      AND oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 17
                 )
@@ -1199,7 +1187,7 @@ LEFT OUTER JOIN
                     FROM [dbo].["aretum"."org_access_hierarchy"] h
                     JOIN [dbo].["aretum"."org_access_person"] oap
                       ON oap.org_access_person_key = h.org_access_person_key
-                    WHERE oap.person_key = @person_key
+                    WHERE oap.person_key = 3896
                       AND oap.access_type = 4
                       AND oap.role_key = 17
                 )
@@ -1209,7 +1197,7 @@ LEFT OUTER JOIN
             SELECT 1
             FROM [dbo].["aretum"."project_controller"] pc
             WHERE pc.project_key = proj.project_key
-              AND pc.person_key = @person_key
+              AND pc.person_key = 3896
               AND pc.role_key IN (12, 13)
         )
         OR EXISTS (
@@ -1220,7 +1208,7 @@ LEFT OUTER JOIN
              AND a.role_key = pc.role_key
             WHERE pc.project_key = proj.project_key
               AND pc.primary_ind = 'Y'
-              AND a.alternate_key = @person_key
+              AND a.alternate_key = 3896
               AND pc.role_key IN (12, 13)
         )
 ) wrE6
