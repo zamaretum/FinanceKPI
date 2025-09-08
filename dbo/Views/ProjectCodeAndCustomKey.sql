@@ -1,4 +1,4 @@
-CREATE OR ALTER VIEW [dbo].[ProjectCodeAndCustomKey]
+CREATE OR ALTER VIEW [dbo].[ProjectCodeAndCustomerKey]
 AS
 WITH
 all_fiscal_accounts AS (
