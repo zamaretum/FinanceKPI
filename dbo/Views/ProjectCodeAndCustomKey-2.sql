@@ -1,3 +1,11 @@
+-- Common filters:
+--  WHERE
+--     ("CUSTOMER_CODE" LIKE '%DOD%'
+--      AND "Title" NOT LIKE '%IDIQ%'
+--      AND "Title" NOT LIKE '%BPA%'
+--      AND "Acct Fin Lv6 Code" = '500000'
+--      AND "Fiscal Year" = 'FY2025');
+
 CREATE   VIEW [dbo].[ProjectCodeAndCustomerKey_2]
 AS
 WITH
