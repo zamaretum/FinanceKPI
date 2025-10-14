@@ -1,213 +1,211 @@
+CREATE   VIEW [dbo].[ProjectCodeAndCustomerKey_2]
+AS
+WITH
+all_fiscal_accounts AS (
+    SELECT
+        gl.account_key                  AS account_key,
+        gl.organization_key             AS org_key,
+        fm.fiscal_month_key             AS fiscal_month_key,
+        fm.fiscal_year_key              AS fiscal_year_key,
+        fm.begin_date                   AS begin_date,
+        fm.end_date                     AS end_date,
+        CAST(0 AS DECIMAL(38,6))        AS amount,
+        a.type                          AS acc_type,
+        gl.transaction_currency         AS transaction_currency,
+        gl.local_currency               AS local_currency
+    FROM (
+        SELECT DISTINCT
+            account_key,
+            organization_key,
+            transaction_currency,
+            local_currency
+        FROM [dbo].["aretum"."general_ledger"]
+    ) gl
+    CROSS JOIN [dbo].["aretum"."fiscal_month"] fm
+    JOIN [dbo].["aretum"."account"] a
+      ON a.account_key = gl.account_key
+    WHERE fm.begin_date >= DATEADD(YEAR, -4, CAST(GETDATE() AS date))
+),
+re_accounts_cte AS (
+    SELECT
+        gl.account_key                                  AS account_key,
+        gl.organization_key                             AS org_key,
+        gl.fiscal_month_key                             AS fiscal_month_key,
+        MAX(fm.fiscal_year_key)                         AS fiscal_year_key,
+        MAX(fm.begin_date)                              AS begin_date,
+        MAX(fm.end_date)                                AS end_date,
+        SUM(CASE WHEN a.type = 'E' THEN (gl.debit_amount - gl.credit_amount)
+                 WHEN a.type = 'R' THEN (gl.credit_amount - gl.debit_amount)
+                 ELSE 0 END)                            AS amount,
+        SUM(CASE WHEN a.type = 'E' THEN (gl.local_debit_amount - gl.local_credit_amount)
+                 WHEN a.type = 'R' THEN (gl.local_credit_amount - gl.local_debit_amount)
+                 ELSE 0 END)                            AS local_amount,
+        MAX(gl.transaction_currency)                    AS transaction_currency,
+        MAX(gl.local_currency)                          AS local_currency,
+        MAX(a.type)                                     AS acc_type
+    FROM [dbo].["aretum"."general_ledger"] gl
+    JOIN [dbo].["aretum"."fiscal_month"] fm ON fm.fiscal_month_key = gl.fiscal_month_key
+    JOIN [dbo].["aretum"."account"] a       ON a.account_key = gl.account_key
+    WHERE a.type IN ('E','R')
+    GROUP BY gl.account_key, gl.organization_key, gl.fiscal_month_key
+
+    UNION ALL
+
+    SELECT
+        afa.account_key,
+        afa.org_key,
+        afa.fiscal_month_key,
+        afa.fiscal_year_key,
+        afa.begin_date,
+        afa.end_date,
+        CAST(0 AS DECIMAL(38,6))                      AS amount,
+        CAST(0 AS DECIMAL(38,6))                      AS local_amount,
+        afa.transaction_currency,
+        afa.local_currency,
+        afa.acc_type
+    FROM all_fiscal_accounts afa
+    WHERE afa.acc_type IN ('E','R')
+      AND NOT EXISTS (
+            SELECT 1
+            FROM [dbo].["aretum"."general_ledger"] gl1
+            WHERE gl1.account_key = afa.account_key
+              AND gl1.organization_key = afa.org_key
+              AND gl1.fiscal_month_key = afa.fiscal_month_key
+      )
+),
+totals AS (
+    SELECT
+        x.account_key,
+        x.org_key,
+        x.acc_type                                   AS account_type,
+        fm_next.fiscal_month_key                     AS fiscal_month_key,
+        x.fiscal_month_key                           AS prev_fiscal_month_key,
+        SUM(amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)        AS amount,
+        SUM(amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)        AS amount_c,
+        SUM(local_amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)  AS local_amount,
+        SUM(local_amount) OVER (PARTITION BY x.account_key, x.org_key ORDER BY x.begin_date)  AS local_amount_c,
+        x.transaction_currency,
+        x.local_currency
+    FROM (
+        SELECT
+            gl.account_key,
+            gl.organization_key        AS org_key,
+            gl.fiscal_month_key,
+            MAX(fm.begin_date)         AS begin_date,
+            MAX(fm.end_date)           AS end_date,
+            SUM(CASE WHEN a.type = 'A' THEN (gl.debit_amount - gl.credit_amount)
+                     WHEN a.type = 'L' THEN (gl.credit_amount - gl.debit_amount)
+                     ELSE 0 END)        AS amount,
+            SUM(CASE WHEN a.type = 'A' THEN (gl.local_debit_amount - gl.local_credit_amount)
+                     WHEN a.type = 'L' THEN (gl.local_credit_amount - gl.local_debit_amount)
+                     ELSE 0 END)        AS local_amount,
+            MAX(gl.local_currency)     AS local_currency,
+            MAX(gl.transaction_currency) AS transaction_currency,
+            MAX(a.type)                AS acc_type
+        FROM [dbo].["aretum"."general_ledger"] gl
+        JOIN [dbo].["aretum"."fiscal_month"] fm ON fm.fiscal_month_key = gl.fiscal_month_key
+        JOIN [dbo].["aretum"."account"] a       ON a.account_key = gl.account_key
+        WHERE a.type IN ('A','L')
+        GROUP BY gl.account_key, gl.organization_key, gl.fiscal_month_key
+
+        UNION ALL
+
+        SELECT
+            afa.account_key,
+            afa.org_key,
+            afa.fiscal_month_key,
+            afa.begin_date,
+            afa.end_date,
+            CAST(0 AS DECIMAL(38,6)) AS amount,
+            CAST(0 AS DECIMAL(38,6)) AS local_amount,
+            afa.local_currency,
+            afa.transaction_currency,
+            afa.acc_type
+        FROM all_fiscal_accounts afa
+        WHERE afa.acc_type IN ('A','L')
+          AND NOT EXISTS (
+                SELECT 1
+                FROM [dbo].["aretum"."general_ledger"] gl1
+                WHERE gl1.account_key = afa.account_key
+                  AND gl1.organization_key = afa.org_key
+                  AND gl1.fiscal_month_key = afa.fiscal_month_key
+          )
+    ) x
+    JOIN [dbo].["aretum"."fiscal_month"] fm_next
+      ON fm_next.begin_date = DATEADD(day, 1, x.end_date)
+
+    UNION ALL
+
+    SELECT
+        x.account_key,
+        x.org_key,
+        MAX(x.acc_type)                              AS account_type,
+        fm_next.fiscal_month_key                     AS fiscal_month_key,
+        x.fiscal_month_key                           AS prev_fiscal_month_key,
+        CASE WHEN fm_next.period_number = 1 THEN 0 ELSE SUM(y.amount) END       AS amount,
+        SUM(y.amount)                                AS amount_c,
+        CASE WHEN fm_next.period_number = 1 THEN 0 ELSE SUM(y.local_amount) END AS local_amount,
+        SUM(y.local_amount)                          AS local_amount_c,
+        MAX(x.transaction_currency)                  AS transaction_currency,
+        MAX(x.local_currency)                        AS local_currency
+    FROM re_accounts_cte x
+    JOIN re_accounts_cte y
+      ON x.account_key = y.account_key
+     AND x.org_key    = y.org_key
+     AND x.begin_date >= y.begin_date
+     AND x.fiscal_year_key = y.fiscal_year_key
+    JOIN [dbo].["aretum"."fiscal_month"] fm_next
+      ON fm_next.begin_date = DATEADD(day, 1, x.end_date)
+    JOIN [dbo].["aretum"."fiscal_year"] fy
+      ON fy.fiscal_year_key = fm_next.fiscal_year_key
+    GROUP BY
+        x.account_key,
+        x.org_key,
+        fm_next.fiscal_month_key,
+        fm_next.period_number,
+        x.fiscal_month_key
+),
+consol_tree_orgs AS (
+    SELECT
+        c.node_key AS org_key,
+        MAX(CASE WHEN p.tree_level = 0 THEN p.node_key END) AS org_key_0,
+        MAX(CASE WHEN p.tree_level = 1 THEN p.node_key END) AS org_key_1,
+        MAX(CASE WHEN p.tree_level = 2 THEN p.node_key END) AS org_key_2,
+        MAX(CASE WHEN p.tree_level = 3 THEN p.node_key END) AS org_key_3,
+        MAX(CASE WHEN p.tree_level = 4 THEN p.node_key END) AS org_key_4,
+        MAX(CASE WHEN p.tree_level = 5 THEN p.node_key END) AS org_key_5
+    FROM [dbo].["aretum"."org_consolidation_tree"] c
+    JOIN [dbo].["aretum"."org_consolidation_tree"] p
+      ON c.left_visit BETWEEN p.left_visit AND p.right_visit
+    GROUP BY c.node_key
+),
+intercompany_support AS (
+    SELECT
+        pi.project_key,
+        STRING_AGG(org.customer_name, ', ') AS pi_list
+    FROM [dbo].["aretum"."project_intercompany"] pi
+    LEFT JOIN [dbo].["aretum"."customer"] org
+      ON org.customer_key = pi.ic_org
+    GROUP BY pi.project_key
+)
 SELECT
-    wrE20."Proj Code" AS c0,
-    wrE8."CUSTOMER_KEY" AS c1,
-    wrE8."CUSTOMER_CODE" AS c2,
-    wrE8."CUSTOMER_NAME" AS c3,
-    wrE4."Title" AS c4,
-    wrE19."Fiscal Year" AS c5,
-    wrE20."General Ledger Key" AS c6,
-    wrE18."ACCOUNT_KEY" AS c7,
-    wrE4."Project Key" AS c8,
-    wrE19."Fiscal Month Key" AS c9,
-    wrE18."Acct Fin Lv6 Code" AS c10,
-    wrE20."Organization Key" AS c11,
-    wrE20."Acct Key" AS c12,
-    wrE20."Fiscal Month Key" AS c13,
-    wrE20."Project Key" AS c14
+    wrE20."Proj Code" AS "Proj Code",
+    wrE8."CUSTOMER_KEY" AS "CUSTOMER_KEY",
+    wrE8."CUSTOMER_CODE" AS "CUSTOMER_CODE",
+    wrE8."CUSTOMER_NAME" AS "CUSTOMER_NAME",
+    wrE4."Title" AS "Title",
+    wrE19."Fiscal Year" AS "Fiscal Year",
+    wrE20."General Ledger Key" AS "General Ledger Key",
+    wrE18."ACCOUNT_KEY" AS "ACCOUNT_KEY",
+    wrE4."Project Key" AS "Project Key",
+    wrE19."Fiscal Month Key" AS "Fiscal Month Key",
+    wrE18."Acct Fin Lv6 Code" AS "Acct Fin Lv6 Code",
+    wrE20."Organization Key" AS "Organization Key",
+    wrE20."Acct Key" AS "Acct Key",
+    wrE20."Fiscal Month Key" AS "Fiscal Month Key2",
+    wrE20."Project Key" AS "Project Key2"
 FROM (
-    with all_fiscal_accounts as (
-        select
-            gl.account_key                  account_key,
-            gl.organization_key             org_key,
-            fm.fiscal_month_key             fiscal_month_key,
-            fm.fiscal_year_key              fiscal_year_key,
-            fm.begin_date                   begin_date,
-            fm.end_date                     end_date,
-            0                               amount,
-            a.type                          acc_type,
-            gl.transaction_currency         transaction_currency,
-            gl.local_currency               local_currency
-        from (
-            select distinct
-                account_key,
-                organization_key,
-                transaction_currency,
-                local_currency
-            from general_ledger
-        ) gl
-        cross join fiscal_month fm
-        join account a on a.account_key = gl.account_key
-        where fm.begin_date >= current_date - INTERVAL '3' year - INTERVAL '1' year
-    ),
-    re_accounts_cte as (
-        select
-            gl.account_key                  account_key,
-            gl.organization_key             org_key,
-            gl.fiscal_month_key             fiscal_month_key,
-            max(fm.fiscal_year_key)         fiscal_year_key,
-            max(fm.begin_date)              begin_date,
-            max(fm.end_date)                end_date,
-            sum(
-                case
-                    when a.type = 'E' then (gl.debit_amount - gl.credit_amount)
-                    when a.type = 'R' then (gl.credit_amount - gl.debit_amount)
-                    else 0
-                end
-            ) amount,
-            sum(
-                case
-                    when a.type = 'E' then (gl.local_debit_amount - gl.local_credit_amount)
-                    when a.type = 'R' then (gl.local_credit_amount - gl.local_debit_amount)
-                    else 0
-                end
-            )                               local_amount,
-            max(gl.transaction_currency)    transaction_currency,
-            max(gl.local_currency)          local_currency,
-            max(a.type)                     acc_type
-        from general_ledger gl
-        join fiscal_month fm on fm.fiscal_month_key = gl.fiscal_month_key
-        join account a on a.account_key = gl.account_key
-        where a.type in ('E','R')
-        group by gl.account_key, gl.organization_key, gl.fiscal_month_key
-
-        union all
-
-        select
-            afa.account_key                 account_key,
-            afa.org_key                     org_key,
-            afa.fiscal_month_key            fiscal_month_key,
-            afa.fiscal_year_key             fiscal_year_key,
-            afa.begin_date                  begin_date,
-            afa.end_date                    end_date,
-            0                               amount,
-            0                               local_amount,
-            afa.transaction_currency        transaction_currency,
-            afa.local_currency              local_currency,
-            afa.acc_type                    acc_type
-        from all_fiscal_accounts afa
-        where
-            afa.acc_type in ('E','R')
-            and not exists (
-                select null
-                from general_ledger gl1
-                where
-                    gl1.account_key = afa.account_key
-                    and gl1.organization_key = afa.org_key
-                    and gl1.fiscal_month_key = afa.fiscal_month_key
-            )
-    ),
-    totals as (
-        select
-            x.account_key                        account_key,
-            x.org_key                            org_key,
-            x.acc_type                           account_type,
-            fm_next.fiscal_month_key             fiscal_month_key,
-            x.fiscal_month_key                   prev_fiscal_month_key,
-            sum(amount) over (
-                partition by x.account_key, x.org_key
-                order by x.begin_date
-            )                                    amount,
-            sum(amount) over (
-                partition by x.account_key, x.org_key
-                order by x.begin_date
-            )                                    amount_c,
-            sum(local_amount) over (
-                partition by x.account_key, x.org_key
-                order by x.begin_date
-            )                                    local_amount,
-            sum(local_amount) over (
-                partition by x.account_key, x.org_key
-                order by x.begin_date
-            )                                    local_amount_c,
-            x.transaction_currency,
-            x.local_currency
-        from (
-            select
-                gl.account_key                  account_key,
-                gl.organization_key             org_key,
-                gl.fiscal_month_key             fiscal_month_key,
-                max(fm.begin_date)              begin_date,
-                max(fm.end_date)                end_date,
-                sum(
-                    case
-                        when a.type = 'A' then (gl.debit_amount - gl.credit_amount)
-                        when a.type = 'L' then (gl.credit_amount - gl.debit_amount)
-                        else 0
-                    end
-                ) amount,
-                sum(
-                    case
-                        when a.type = 'A' then (gl.local_debit_amount - gl.local_credit_amount)
-                        when a.type = 'L' then (gl.local_credit_amount - gl.local_debit_amount)
-                        else 0
-                    end
-                ) local_amount,
-                max(gl.local_currency)          local_currency,
-                max(gl.transaction_currency)    transaction_currency,
-                max(a.type)                     acc_type
-            from general_ledger gl
-            join fiscal_month fm on fm.fiscal_month_key = gl.fiscal_month_key
-            join account a on a.account_key = gl.account_key
-            where a.type in ('A','L')
-            group by gl.account_key, gl.organization_key, gl.fiscal_month_key
-
-            union all
-
-            select
-                afa.account_key                 account_key,
-                afa.org_key                     org_key,
-                afa.fiscal_month_key            fiscal_month_key,
-                afa.begin_date                  begin_date,
-                afa.end_date                    end_date,
-                0                               amount,
-                0                               local_amount,
-                afa.local_currency              local_currency,
-                afa.transaction_currency        transaction_currency,
-                afa.acc_type
-            from all_fiscal_accounts afa
-            where
-                afa.acc_type in ('A','L')
-                and not exists (
-                    select null
-                    from general_ledger gl1
-                    where
-                        gl1.account_key = afa.account_key
-                        and gl1.organization_key = afa.org_key
-                        and gl1.fiscal_month_key = afa.fiscal_month_key
-                )
-        ) x
-        join fiscal_month fm_next on fm_next.begin_date = x.end_date + INTERVAL '1' day
-
-        union all
-
-        select
-            x.account_key                        account_key,
-            x.org_key                            org_key,
-            max(x.acc_type)                      account_type,
-            fm_next.fiscal_month_key             fiscal_month_key,
-            x.fiscal_month_key                   prev_fiscal_month_key,
-            case when fm_next.period_number = 1 then 0 else sum(y.amount) end          amount,
-            sum(y.amount)                        amount_c,
-            case when fm_next.period_number = 1 then 0 else sum(y.local_amount) end    local_amount,
-            sum(y.local_amount)                  local_amount_c,
-            max(x.transaction_currency)          transaction_currency,
-            max(x.local_currency)                local_currency
-        from re_accounts_cte x
-        join re_accounts_cte y
-            on x.account_key = y.account_key
-            and x.org_key = y.org_key
-            and x.begin_date >= y.begin_date
-            and x.fiscal_year_key = y.fiscal_year_key
-        join fiscal_month fm_next on fm_next.begin_date = x.end_date + INTERVAL '1' day
-        join fiscal_year fy on fy.fiscal_year_key = fm_next.fiscal_year_key
-        group by
-            x.account_key,
-            x.org_key,
-            fm_next.fiscal_month_key,
-            fm_next.period_number,
-            x.fiscal_month_key
-    )
-    select
+    SELECT
         x."General Ledger Key",
         x."Acct Key",
         x."Customer Key",
@@ -253,448 +251,434 @@ FROM (
         x."Local Credit Amount",
         x."Local Debit Amount",
         x."Local Ending Balance"
-    from (
-        select
-            NULL                            as "General Ledger Key",
-            t.account_key                   as "Acct Key",
-            NULL                            as "Customer Key",
-            t.org_key                       as "Organization Key",
-            NULL                            as "Project Key",
-            NULL                            as "Person Key",
-            fm_prev.fiscal_month_key        as "Fiscal Month Key",
-            a.account_code                  as "Acct Code",
-            a.description                   as "Acct Description",
-            case a.type
-                when 'A' then 'Asset'
-                when 'E' then 'Expense'
-                when 'L' then 'Liability'
-                when 'R' then 'Revenue'
-                else 'Unknown Account Type'
-            end                             as "Acct Type",
-            case a.type
-                when 'A' then 1
-                when 'L' then 2
-                when 'R' then 3
-                when 'E' then 4
-            end                             as "Acct Type Order",
-            NULL                            as "Credit Amount",
-            NULL                            as "Customer/Vendor Code",
-            NULL                            as "Customer/Vendor Name",
-            NULL                            as "Debit Amount",
-            'Calculated Balance'            as "GL Description",
-            NULL                            as "Doc Number",
-            NULL                            as "Doc Key",
-            NULL                            as "Doc Type",
-            NULL                            as "Doc Type Description",
-            org.customer_code               as "Fin Org Code",
-            org.customer_name               as "Fin Org Name",
-            case
-                when fm_prev.period_number < 10
-                    then concat(concat(concat(fy.name,'-'),'0'),cast(fm_prev.period_number as varchar(4)))
-                else concat(concat(fy.name,'-'),cast(fm_prev.period_number as varchar(4)))
-            end                             as "Fiscal Period",
-            NULL                            as "Post Date",
-            NULL                            as "Quantity",
-            NULL                            as "Transaction Date",
-            le.customer_code                as "Legal Entity Org Code",
-            le.customer_name                as "Legal Entity Org Name",
-            NULL                            as "Person First Name",
-            NULL                            as "Person Last Name",
-            NULL                            as "Person Middle Initial",
-            NULL                            as "Proj Code",
-            NULL                            as "Proj Org Code",
-            NULL                            as "Proj Org Name",
-            NULL                            as "Proj Owning Org Code",
-            NULL                            as "Proj Owning Org Name",
-            NULL                            as "Reference",
-            t_p.amount                      as "BEGINNING_BALANCE",
-            t.amount                        as "ENDING_BALANCE",
-            ccc.iso_currency_code           as "Transaction Currency Code",
-            lcc.iso_currency_code           as "Local Currency Code",
-            t_p.local_amount                as "Local Beginning Balance",
-            NULL                            as "Local Credit Amount",
-            NULL                            as "Local Debit Amount",
-            t.local_amount                  as "Local Ending Balance"
-        from totals t
-        join totals t_p
-            on t.account_key = t_p.account_key
-            AND t.org_key = t_p.org_key
-            and t.prev_fiscal_month_key = t_p.fiscal_month_key
-        join account a on a.account_key = t.account_key
-        join customer org on org.customer_key = t.org_key
-        join fiscal_month fm on fm.fiscal_month_key = t.fiscal_month_key
-        join fiscal_month fm_prev on fm_prev.end_date = fm.begin_date - INTERVAL '1' day
-        join fiscal_year fy on fy.fiscal_year_key = fm_prev.fiscal_year_key
-        left outer join customer le on le.customer_key = org.legal_entity_key
-        join currency_code ccc on ccc.currency_code_key = t.transaction_currency
-        join currency_code lcc on lcc.currency_code_key = t.local_currency
-        where
-            not (t_p.amount = 0 and t.amount = 0)
-            and fm.begin_date >= current_date - INTERVAL '3' year
+    FROM (
+        SELECT
+            NULL                            AS "General Ledger Key",
+            t.account_key                   AS "Acct Key",
+            NULL                            AS "Customer Key",
+            t.org_key                       AS "Organization Key",
+            NULL                            AS "Project Key",
+            NULL                            AS "Person Key",
+            fm_prev.fiscal_month_key        AS "Fiscal Month Key",
+            a.account_code                  AS "Acct Code",
+            a.description                   AS "Acct Description",
+            CASE a.type
+                WHEN 'A' THEN 'Asset'
+                WHEN 'E' THEN 'Expense'
+                WHEN 'L' THEN 'Liability'
+                WHEN 'R' THEN 'Revenue'
+                ELSE 'Unknown Account Type'
+            END                             AS "Acct Type",
+            CASE a.type
+                WHEN 'A' THEN 1
+                WHEN 'L' THEN 2
+                WHEN 'R' THEN 3
+                WHEN 'E' THEN 4
+            END                             AS "Acct Type Order",
+            NULL                            AS "Credit Amount",
+            NULL                            AS "Customer/Vendor Code",
+            NULL                            AS "Customer/Vendor Name",
+            NULL                            AS "Debit Amount",
+            'Calculated Balance'            AS "GL Description",
+            NULL                            AS "Doc Number",
+            NULL                            AS "Doc Key",
+            NULL                            AS "Doc Type",
+            NULL                            AS "Doc Type Description",
+            org.customer_code               AS "Fin Org Code",
+            org.customer_name               AS "Fin Org Name",
+            CASE
+                WHEN fm_prev.period_number < 10
+                    THEN CONCAT(CONCAT(CONCAT(fy.name,'-'),'0'),CAST(fm_prev.period_number AS varchar(4)))
+                ELSE CONCAT(CONCAT(fy.name,'-'),CAST(fm_prev.period_number AS varchar(4)))
+            END                             AS "Fiscal Period",
+            NULL                            AS "Post Date",
+            NULL                            AS "Quantity",
+            NULL                            AS "Transaction Date",
+            le.customer_code                AS "Legal Entity Org Code",
+            le.customer_name                AS "Legal Entity Org Name",
+            NULL                            AS "Person First Name",
+            NULL                            AS "Person Last Name",
+            NULL                            AS "Person Middle Initial",
+            NULL                            AS "Proj Code",
+            NULL                            AS "Proj Org Code",
+            NULL                            AS "Proj Org Name",
+            NULL                            AS "Proj Owning Org Code",
+            NULL                            AS "Proj Owning Org Name",
+            NULL                            AS "Reference",
+            t_p.amount                      AS "BEGINNING_BALANCE",
+            t.amount                        AS "ENDING_BALANCE",
+            ccc.iso_currency_code           AS "Transaction Currency Code",
+            lcc.iso_currency_code           AS "Local Currency Code",
+            t_p.local_amount                AS "Local Beginning Balance",
+            NULL                            AS "Local Credit Amount",
+            NULL                            AS "Local Debit Amount",
+            t.local_amount                  AS "Local Ending Balance"
+        FROM totals t
+        JOIN totals t_p
+          ON t.account_key = t_p.account_key
+         AND t.org_key = t_p.org_key
+         AND t.prev_fiscal_month_key = t_p.fiscal_month_key
+        JOIN [dbo].["aretum"."account"] a ON a.account_key = t.account_key
+        JOIN [dbo].["aretum"."customer"] org ON org.customer_key = t.org_key
+        JOIN [dbo].["aretum"."fiscal_month"] fm ON fm.fiscal_month_key = t.fiscal_month_key
+        JOIN [dbo].["aretum"."fiscal_month"] fm_prev ON fm_prev.end_date = DATEADD(day, -1, fm.begin_date)
+        JOIN [dbo].["aretum"."fiscal_year"] fy ON fy.fiscal_year_key = fm_prev.fiscal_year_key
+        LEFT OUTER JOIN [dbo].["aretum"."customer"] le ON le.customer_key = org.legal_entity_key
+        JOIN [dbo].["aretum"."currency_code"] ccc ON ccc.currency_code_key = t.transaction_currency
+        JOIN [dbo].["aretum"."currency_code"] lcc ON lcc.currency_code_key = t.local_currency
+        WHERE NOT (t_p.amount = 0 AND t.amount = 0)
+          AND fm.begin_date >= DATEADD(YEAR, -3, CAST(GETDATE() AS date))
 
-        union all
+        UNION ALL
 
-        select
-            gl.general_ledger_key           as "General Ledger Key",
-            a.account_key                   as "Acct Key",
-            gl.customer_key                 as "Customer Key",
-            gl.organization_key             as "Organization Key",
-            gl.project_key                  as "Project Key",
-            gl.person_key                   as "Person Key",
-            gl.fiscal_month_key             as "Fiscal Month Key",
-            a.account_code                  as "Acct Code",
-            a.description                   as "Acct Description",
-            case a.type
-                when 'A' then 'Asset'
-                when 'E' then 'Expense'
-                when 'L' then 'Liability'
-                when 'R' then 'Revenue'
-                else 'Unknown Account Type'
-            end                             as "Acct Type",
-            case a.type
-                when 'A' then 1
-                when 'L' then 2
-                when 'R' then 3
-                when 'E' then 4
-            end                             as "Acct Type Order",
-            gl.credit_amount                as "Credit Amount",
-            cust.customer_code              as "Customer/Vendor Code",
-            cust.customer_name              as "Customer/Vendor Name",
-            gl.debit_amount                 as "Debit Amount",
-            gl.description                  as "GL Description",
-            gl.document_number              as "Doc Number",
-            gl.general_ledger_key           as "Doc Key",
-            case gl.feature
-                when 0 then 'VI'
-                when 1 then 'VP'
-                when 2 then 'F2'
-                when 3 then 'CP'
-                when 4 then 'D'
-                when 5 then 'JE'
-                when 6 then 'BR'
-                when 7 then 'CI'
-                when 8 then 'LC'
-                when 9 then 'EC'
-                when 10 then 'FY'
-                when 11 then 'AL'
-                when 13 then 'FA'
-                when 14 then 'PILOB'
-                else 'Unknown Document Type'
-            end                             as "Doc Type",
-            case gl.feature
-                when 0 then 'Vendor Invoice'
-                when 1 then 'Vendor Payment'
-                when 2 then 'Unknown Feature 2'
-                when 3 then 'Customer Payment'
-                when 4 then 'Deposit'
-                when 5 then 'Journal Entry'
-                when 6 then 'Billing and Revenue Post'
-                when 7 then 'Invoice'
-                when 8 then 'Labor Cost Post'
-                when 9 then 'Expense Report Cost Post'
-                when 10 then 'General Ledger Closing'
-                when 11 then 'Cost Pool Post'
-                when 13 then 'Fixed Asset Post'
-                when 14 then 'Pay in Lieu of Benefits'
-                else 'Unknown Document Type'
-            end                             as "Doc Type Description",
-            org.customer_code               as "Fin Org Code",
-            org.customer_name               as "Fin Org Name",
-            case
-                when fm.period_number < 10
-                    then concat(concat(concat(fy.name,'-'),'0'),cast(fm.period_number as varchar(4)))
-                else concat(concat(fy.name,'-'),cast(fm.period_number as varchar(4)))
-            end                             as "Fiscal Period",
-            gl.post_date                    as "Post Date",
-            gl.quantity                     as "Quantity",
-            gl.transaction_date             as "Transaction Date",
-            le.customer_code                as "Legal Entity Org Code",
-            le.customer_name                as "Legal Entity Org Name",
-            pers.first_name                 as "Person First Name",
-            pers.last_name                  as "Person Last Name",
-            pers.middle_initial             as "Person Middle Initial",
-            proj.project_code               as "Proj Code",
-            porg.customer_code              as "Proj Org Code",
-            porg.customer_name              as "Proj Org Name",
-            pown.customer_code              as "Proj Owning Org Code",
-            pown.customer_name              as "Proj Owning Org Name",
-            gl.reference                    as "Reference",
-            null                            as "BEGINNING_BALANCE",
-            null                            as "ENDING_BALANCE",
-            ccc.iso_currency_code           as "Transaction Currency Code",
-            lcc.iso_currency_code           as "Local Currency Code",
-            null                            as "Local Beginning Balance",
-            gl.local_credit_amount          as "Local Credit Amount",
-            gl.local_debit_amount           as "Local Debit Amount",
-            null                            as "Local Ending Balance"
-        from general_ledger gl
-        join account a on a.account_key = gl.account_key
-        join customer org on org.customer_key = gl.organization_key
-        left outer join customer le on le.customer_key = org.legal_entity_key
-        left outer join customer cust on cust.customer_key = gl.customer_key
-        join fiscal_month fm on fm.fiscal_month_key = gl.fiscal_month_key
-        join fiscal_year fy on fy.fiscal_year_key = fm.fiscal_year_key
-        left outer join project proj on proj.project_key = gl.project_key
-        left outer join customer porg on porg.customer_key = proj.customer_key
-        left outer join customer pown on pown.customer_key = proj.owning_customer_key
-        left outer join person pers on pers.person_key = gl.person_key
-        join currency_code ccc on ccc.currency_code_key = gl.transaction_currency
-        join currency_code lcc on lcc.currency_code_key = gl.local_currency
-        where fm.begin_date >= current_date - INTERVAL '3' year
+        SELECT
+            gl.general_ledger_key           AS "General Ledger Key",
+            a.account_key                   AS "Acct Key",
+            gl.customer_key                 AS "Customer Key",
+            gl.organization_key             AS "Organization Key",
+            gl.project_key                  AS "Project Key",
+            gl.person_key                   AS "Person Key",
+            gl.fiscal_month_key             AS "Fiscal Month Key",
+            a.account_code                  AS "Acct Code",
+            a.description                   AS "Acct Description",
+            CASE a.type
+                WHEN 'A' THEN 'Asset'
+                WHEN 'E' THEN 'Expense'
+                WHEN 'L' THEN 'Liability'
+                WHEN 'R' THEN 'Revenue'
+                ELSE 'Unknown Account Type'
+            END                             AS "Acct Type",
+            CASE a.type
+                WHEN 'A' THEN 1
+                WHEN 'L' THEN 2
+                WHEN 'R' THEN 3
+                WHEN 'E' THEN 4
+            END                             AS "Acct Type Order",
+            gl.credit_amount                AS "Credit Amount",
+            cust.customer_code              AS "Customer/Vendor Code",
+            cust.customer_name              AS "Customer/Vendor Name",
+            gl.debit_amount                 AS "Debit Amount",
+            gl.description                  AS "GL Description",
+            gl.document_number              AS "Doc Number",
+            gl.general_ledger_key           AS "Doc Key",
+            CASE gl.feature
+                WHEN 0 THEN 'VI'
+                WHEN 1 THEN 'VP'
+                WHEN 2 THEN 'F2'
+                WHEN 3 THEN 'CP'
+                WHEN 4 THEN 'D'
+                WHEN 5 THEN 'JE'
+                WHEN 6 THEN 'BR'
+                WHEN 7 THEN 'CI'
+                WHEN 8 THEN 'LC'
+                WHEN 9 THEN 'EC'
+                WHEN 10 THEN 'FY'
+                WHEN 11 THEN 'AL'
+                WHEN 13 THEN 'FA'
+                WHEN 14 THEN 'PILOB'
+                ELSE 'Unknown Document Type'
+            END                             AS "Doc Type",
+            CASE gl.feature
+                WHEN 0 THEN 'Vendor Invoice'
+                WHEN 1 THEN 'Vendor Payment'
+                WHEN 2 THEN 'Unknown Feature 2'
+                WHEN 3 THEN 'Customer Payment'
+                WHEN 4 THEN 'Deposit'
+                WHEN 5 THEN 'Journal Entry'
+                WHEN 6 THEN 'Billing and Revenue Post'
+                WHEN 7 THEN 'Invoice'
+                WHEN 8 THEN 'Labor Cost Post'
+                WHEN 9 THEN 'Expense Report Cost Post'
+                WHEN 10 THEN 'General Ledger Closing'
+                WHEN 11 THEN 'Cost Pool Post'
+                WHEN 13 THEN 'Fixed Asset Post'
+                WHEN 14 THEN 'Pay in Lieu of Benefits'
+                ELSE 'Unknown Document Type'
+            END                             AS "Doc Type Description",
+            org.customer_code               AS "Fin Org Code",
+            org.customer_name               AS "Fin Org Name",
+            CASE
+                WHEN fm.period_number < 10
+                    THEN CONCAT(CONCAT(CONCAT(fy.name,'-'),'0'),CAST(fm.period_number AS varchar(4)))
+                ELSE CONCAT(CONCAT(fy.name,'-'),CAST(fm.period_number AS varchar(4)))
+            END                             AS "Fiscal Period",
+            gl.post_date                    AS "Post Date",
+            gl.quantity                     AS "Quantity",
+            gl.transaction_date             AS "Transaction Date",
+            le.customer_code                AS "Legal Entity Org Code",
+            le.customer_name                AS "Legal Entity Org Name",
+            pers.first_name                 AS "Person First Name",
+            pers.last_name                  AS "Person Last Name",
+            pers.middle_initial             AS "Person Middle Initial",
+            proj.project_code               AS "Proj Code",
+            porg.customer_code              AS "Proj Org Code",
+            porg.customer_name              AS "Proj Org Name",
+            pown.customer_code              AS "Proj Owning Org Code",
+            pown.customer_name              AS "Proj Owning Org Name",
+            gl.reference                    AS "Reference",
+            NULL                            AS "BEGINNING_BALANCE",
+            NULL                            AS "ENDING_BALANCE",
+            ccc.iso_currency_code           AS "Transaction Currency Code",
+            lcc.iso_currency_code           AS "Local Currency Code",
+            NULL                            AS "Local Beginning Balance",
+            gl.local_credit_amount          AS "Local Credit Amount",
+            gl.local_debit_amount           AS "Local Debit Amount",
+            NULL                            AS "Local Ending Balance"
+        FROM [dbo].["aretum"."general_ledger"] gl
+        JOIN [dbo].["aretum"."account"] a ON a.account_key = gl.account_key
+        JOIN [dbo].["aretum"."customer"] org ON org.customer_key = gl.organization_key
+        LEFT OUTER JOIN [dbo].["aretum"."customer"] le ON le.customer_key = org.legal_entity_key
+        LEFT OUTER JOIN [dbo].["aretum"."customer"] cust ON cust.customer_key = gl.customer_key
+        JOIN [dbo].["aretum"."fiscal_month"] fm ON fm.fiscal_month_key = gl.fiscal_month_key
+        JOIN [dbo].["aretum"."fiscal_year"] fy ON fy.fiscal_year_key = fm.fiscal_year_key
+        LEFT OUTER JOIN [dbo].["aretum"."project"] proj ON proj.project_key = gl.project_key
+        LEFT OUTER JOIN [dbo].["aretum"."customer"] porg ON porg.customer_key = proj.customer_key
+        LEFT OUTER JOIN [dbo].["aretum"."customer"] pown ON pown.customer_key = proj.owning_customer_key
+        LEFT OUTER JOIN [dbo].["aretum"."person"] pers ON pers.person_key = gl.person_key
+        JOIN [dbo].["aretum"."currency_code"] ccc ON ccc.currency_code_key = gl.transaction_currency
+        JOIN [dbo].["aretum"."currency_code"] lcc ON lcc.currency_code_key = gl.local_currency
+        WHERE fm.begin_date >= DATEADD(YEAR, -3, CAST(GETDATE() AS date))
     ) x
-    where
-        (exists (select null from member where person_key = '3896' and role_key = 1))
-        OR (exists (select null from org_access_person where person_key = '3896' and role_key = 33 and global_access = 'Y'))
+    WHERE
+        (EXISTS (SELECT 1 FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key = 1))
+        OR (EXISTS (SELECT 1 FROM [dbo].["aretum"."org_access_person"] WHERE person_key = '3896' AND role_key = 33 AND global_access = 'Y'))
         OR (
-            x."Organization Key" in (
-                select customer_key
-                from access_customer_view v
-                join org_access_person oap on oap.org_access_person_key = v.org_access_person_key
-                where oap.person_key = '3896' and oap.role_key = 33 and oap.access_type = 2 and legal_entity_ind = 'N'
+            x."Organization Key" IN (
+                SELECT customer_key
+                FROM [dbo].["aretum"."access_customer_view"] v
+                JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = v.org_access_person_key
+                WHERE oap.person_key = '3896' AND oap.role_key = 33 AND oap.access_type = 2 AND v.legal_entity_ind = 'N'
                 UNION ALL
-                select customer_key
-                from customer cust
-                where cust.legal_entity_key in (
-                    select customer_key
-                    from access_customer_view v
-                    join org_access_person oap on oap.org_access_person_key = v.org_access_person_key
-                    where oap.person_key = '3896' and oap.role_key = 33 and oap.access_type = 2 and legal_entity_ind = 'Y'
+                SELECT customer_key
+                FROM [dbo].["aretum"."customer"] cust
+                WHERE cust.legal_entity_key IN (
+                    SELECT customer_key
+                    FROM [dbo].["aretum"."access_customer_view"] v
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = v.org_access_person_key
+                    WHERE oap.person_key = '3896' AND oap.role_key = 33 AND oap.access_type = 2 AND v.legal_entity_ind = 'Y'
                 )
             )
         )
 ) wrE20
 INNER JOIN (
-    with consol_tree_orgs as (
-        select
-            c.node_key org_key,
-            max(case when p.tree_level = 0 then p.node_key else null end) org_key_0,
-            max(case when p.tree_level = 1 then p.node_key else null end) org_key_1,
-            max(case when p.tree_level = 2 then p.node_key else null end) org_key_2,
-            max(case when p.tree_level = 3 then p.node_key else null end) org_key_3,
-            max(case when p.tree_level = 4 then p.node_key else null end) org_key_4,
-            max(case when p.tree_level = 5 then p.node_key else null end) org_key_5
-        from org_consolidation_tree c
-        join org_consolidation_tree p on c.left_visit between p.left_visit and p.right_visit
-        group by c.node_key
-    )
-    select
-        c.customer_key                     as "CUSTOMER_KEY",
-        c.email_1099                       as "EMAIL_1099",
-        c.vendor_1099                      as "VENDOR_1099",
-        c.recipient_name_1099              as "RECIPIENT_NAME_1099",
-        c.federal_tax_id                   as "FEDERAL_TAX_ID",
-        c.federal_tax_id_type              as "FEDERAL_TAX_ID_TYPE",
-        c.financial_org                    as "FINANCIAL_ORG",
-        c.legal_entity                     as "LEGAL_ENTITY",
-        c.active                           as "ACTIVE",
-        c.classification                   as "CLASSIFICATION",
-        c.customer_code                    as "CUSTOMER_CODE",
-        org_cost_pool_tree1.customer_code  as "Org Cost Pool Lv1 Code",
-        org_cost_pool_tree1.customer_name  as "Org Cost Pool Lv1 Name",
-        coalesce(org_cost_pool_tree2.customer_code, org_cost_pool_tree1.customer_code) as "Org Cost Pool Lv2 Code",
-        coalesce(org_cost_pool_tree2.customer_name, org_cost_pool_tree1.customer_name) as "Org Cost Pool Lv2 Name",
-        coalesce(
+    SELECT
+        c.customer_key                     AS "CUSTOMER_KEY",
+        c.email_1099                       AS "EMAIL_1099",
+        c.vendor_1099                      AS "VENDOR_1099",
+        c.recipient_name_1099              AS "RECIPIENT_NAME_1099",
+        c.federal_tax_id                   AS "FEDERAL_TAX_ID",
+        c.federal_tax_id_type              AS "FEDERAL_TAX_ID_TYPE",
+        c.financial_org                    AS "FINANCIAL_ORG",
+        c.legal_entity                     AS "LEGAL_ENTITY",
+        c.active                           AS "ACTIVE",
+        c.classification                   AS "CLASSIFICATION",
+        c.customer_code                    AS "CUSTOMER_CODE",
+        org_cost_pool_tree1.customer_code  AS "Org Cost Pool Lv1 Code",
+        org_cost_pool_tree1.customer_name  AS "Org Cost Pool Lv1 Name",
+        COALESCE(org_cost_pool_tree2.customer_code, org_cost_pool_tree1.customer_code) AS "Org Cost Pool Lv2 Code",
+        COALESCE(org_cost_pool_tree2.customer_name, org_cost_pool_tree1.customer_name) AS "Org Cost Pool Lv2 Name",
+        COALESCE(
             org_cost_pool_tree3.customer_code,
             org_cost_pool_tree2.customer_code,
             org_cost_pool_tree1.customer_code
-        ) as "Org Cost Pool Lv3 Code",
-        coalesce(
+        ) AS "Org Cost Pool Lv3 Code",
+        COALESCE(
             org_cost_pool_tree3.customer_name,
             org_cost_pool_tree2.customer_name,
             org_cost_pool_tree1.customer_name
-        ) as "Org Cost Pool Lv3 Name",
-        coalesce(
+        ) AS "Org Cost Pool Lv3 Name",
+        COALESCE(
             org_cost_pool_tree4.customer_code,
             org_cost_pool_tree3.customer_code,
             org_cost_pool_tree2.customer_code,
             org_cost_pool_tree1.customer_code
-        ) as "Org Cost Pool Lv4 Code",
-        coalesce(
+        ) AS "Org Cost Pool Lv4 Code",
+        COALESCE(
             org_cost_pool_tree4.customer_name,
             org_cost_pool_tree3.customer_name,
             org_cost_pool_tree2.customer_name,
             org_cost_pool_tree1.customer_name
-        ) as "Org Cost Pool Lv4 Name",
-        coalesce(
+        ) AS "Org Cost Pool Lv4 Name",
+        COALESCE(
             org_cost_pool_tree5.customer_code,
             org_cost_pool_tree4.customer_code,
             org_cost_pool_tree3.customer_code,
             org_cost_pool_tree2.customer_code,
             org_cost_pool_tree1.customer_code
-        ) as "Org Cost Pool Lv5 Code",
-        coalesce(
+        ) AS "Org Cost Pool Lv5 Code",
+        COALESCE(
             org_cost_pool_tree5.customer_name,
             org_cost_pool_tree4.customer_name,
             org_cost_pool_tree3.customer_name,
             org_cost_pool_tree2.customer_name,
             org_cost_pool_tree1.customer_name
-        ) as "Org Cost Pool Lv5 Name",
-        coalesce(
+        ) AS "Org Cost Pool Lv5 Name",
+        COALESCE(
             org_cost_pool_tree6.customer_code,
             org_cost_pool_tree5.customer_code,
             org_cost_pool_tree4.customer_code,
             org_cost_pool_tree3.customer_code,
             org_cost_pool_tree2.customer_code,
             org_cost_pool_tree1.customer_code
-        ) as "Org Cost Pool Lv6 Code",
-        coalesce(
+        ) AS "Org Cost Pool Lv6 Code",
+        COALESCE(
             org_cost_pool_tree6.customer_name,
             org_cost_pool_tree5.customer_name,
             org_cost_pool_tree4.customer_name,
             org_cost_pool_tree3.customer_name,
             org_cost_pool_tree2.customer_name,
             org_cost_pool_tree1.customer_name
-        ) as "Org Cost Pool Lv6 Name",
-        c.entry_allowed                    as "ENTRY_ALLOWED",
-        c.begin_date                       as "BEGIN_DATE",
-        c.end_date                         as "END_DATE",
-        c.account_number                   as "ACCOUNT_NUMBER",
-        org_fin_tree1.customer_code        as "Org Fin Lv1 Code",
-        org_fin_tree1.customer_name        as "Org Fin Lv1 Name",
-        coalesce(org_fin_tree2.customer_code, org_fin_tree1.customer_code) as "Org Fin Lv2 Code",
-        coalesce(org_fin_tree2.customer_name, org_fin_tree1.customer_name) as "Org Fin Lv2 Name",
-        coalesce(
+        ) AS "Org Cost Pool Lv6 Name",
+        c.entry_allowed                    AS "ENTRY_ALLOWED",
+        c.begin_date                       AS "BEGIN_DATE",
+        c.end_date                         AS "END_DATE",
+        c.account_number                   AS "ACCOUNT_NUMBER",
+        org_fin_tree1.customer_code        AS "Org Fin Lv1 Code",
+        org_fin_tree1.customer_name        AS "Org Fin Lv1 Name",
+        COALESCE(org_fin_tree2.customer_code, org_fin_tree1.customer_code) AS "Org Fin Lv2 Code",
+        COALESCE(org_fin_tree2.customer_name, org_fin_tree1.customer_name) AS "Org Fin Lv2 Name",
+        COALESCE(
             org_fin_tree3.customer_code,
             org_fin_tree2.customer_code,
             org_fin_tree1.customer_code
-        ) as "Org Fin Lv3 Code",
-        coalesce(
+        ) AS "Org Fin Lv3 Code",
+        COALESCE(
             org_fin_tree3.customer_name,
             org_fin_tree2.customer_name,
             org_fin_tree1.customer_name
-        ) as "Org Fin Lv3 Name",
-        coalesce(
+        ) AS "Org Fin Lv3 Name",
+        COALESCE(
             org_fin_tree4.customer_code,
             org_fin_tree3.customer_code,
             org_fin_tree2.customer_code,
             org_fin_tree1.customer_code
-        ) as "Org Fin Lv4 Code",
-        coalesce(
+        ) AS "Org Fin Lv4 Code",
+        COALESCE(
             org_fin_tree4.customer_name,
             org_fin_tree3.customer_name,
             org_fin_tree2.customer_name,
             org_fin_tree1.customer_name
-        ) as "Org Fin Lv4 Name",
-        coalesce(
+        ) AS "Org Fin Lv4 Name",
+        COALESCE(
             org_fin_tree5.customer_code,
             org_fin_tree4.customer_code,
             org_fin_tree3.customer_code,
             org_fin_tree2.customer_code,
             org_fin_tree1.customer_code
-        ) as "Org Fin Lv5 Code",
-        coalesce(
+        ) AS "Org Fin Lv5 Code",
+        COALESCE(
             org_fin_tree5.customer_name,
             org_fin_tree4.customer_name,
             org_fin_tree3.customer_name,
             org_fin_tree2.customer_name,
             org_fin_tree1.customer_name
-        ) as "Org Fin Lv5 Name",
-        coalesce(
+        ) AS "Org Fin Lv5 Name",
+        COALESCE(
             org_fin_tree6.customer_code,
             org_fin_tree5.customer_code,
             org_fin_tree4.customer_code,
             org_fin_tree3.customer_code,
             org_fin_tree2.customer_code,
             org_fin_tree1.customer_code
-        ) as "Org Fin Lv6 Code",
-        coalesce(
+        ) AS "Org Fin Lv6 Code",
+        COALESCE(
             org_fin_tree6.customer_name,
             org_fin_tree5.customer_name,
             org_fin_tree4.customer_name,
             org_fin_tree3.customer_name,
             org_fin_tree2.customer_name,
             org_fin_tree1.customer_name
-        ) as "Org Fin Lv6 Name",
-        c.industry                         as "INDUSTRY",
-        c.sic_code                         as "SIC_CODE",
-        c.customer_name                    as "CUSTOMER_NAME",
-        org_org_tree1.customer_code        as "Org Org Lv1 Code",
-        org_org_tree1.customer_name        as "Org Org Lv1 Name",
-        coalesce(org_org_tree2.customer_code, org_org_tree1.customer_code) as "Org Org Lv2 Code",
-        coalesce(org_org_tree2.customer_name, org_org_tree1.customer_name) as "Org Org Lv2 Name",
-        coalesce(
+        ) AS "Org Fin Lv6 Name",
+        c.industry                         AS "INDUSTRY",
+        c.sic_code                         AS "SIC_CODE",
+        c.customer_name                    AS "CUSTOMER_NAME",
+        org_org_tree1.customer_code        AS "Org Org Lv1 Code",
+        org_org_tree1.customer_name        AS "Org Org Lv1 Name",
+        COALESCE(org_org_tree2.customer_code, org_org_tree1.customer_code) AS "Org Org Lv2 Code",
+        COALESCE(org_org_tree2.customer_name, org_org_tree1.customer_name) AS "Org Org Lv2 Name",
+        COALESCE(
             org_org_tree3.customer_code,
             org_org_tree2.customer_code,
             org_org_tree1.customer_code
-        ) as "Org Org Lv3 Code",
-        coalesce(
+        ) AS "Org Org Lv3 Code",
+        COALESCE(
             org_org_tree3.customer_name,
             org_org_tree2.customer_name,
             org_org_tree1.customer_name
-        ) as "Org Org Lv3 Name",
-        coalesce(
+        ) AS "Org Org Lv3 Name",
+        COALESCE(
             org_org_tree4.customer_code,
             org_org_tree3.customer_code,
             org_org_tree2.customer_code,
             org_org_tree1.customer_code
-        ) as "Org Org Lv4 Code",
-        coalesce(
+        ) AS "Org Org Lv4 Code",
+        COALESCE(
             org_org_tree4.customer_name,
             org_org_tree3.customer_name,
             org_org_tree2.customer_name,
             org_org_tree1.customer_name
-        ) as "Org Org Lv4 Name",
-        coalesce(
+        ) AS "Org Org Lv4 Name",
+        COALESCE(
             org_org_tree5.customer_code,
             org_org_tree4.customer_code,
             org_org_tree3.customer_code,
             org_org_tree2.customer_code,
             org_org_tree1.customer_code
-        ) as "Org Org Lv5 Code",
-        coalesce(
+        ) AS "Org Org Lv5 Code",
+        COALESCE(
             org_org_tree5.customer_name,
             org_org_tree4.customer_name,
             org_org_tree3.customer_name,
             org_org_tree2.customer_name,
             org_org_tree1.customer_name
-        ) as "Org Org Lv5 Name",
-        coalesce(
+        ) AS "Org Org Lv5 Name",
+        COALESCE(
             org_org_tree6.customer_code,
             org_org_tree5.customer_code,
             org_org_tree4.customer_code,
             org_org_tree3.customer_code,
             org_org_tree2.customer_code,
             org_org_tree1.customer_code
-        ) as "Org Org Lv6 Code",
-        coalesce(
+        ) AS "Org Org Lv6 Code",
+        COALESCE(
             org_org_tree6.customer_name,
             org_org_tree5.customer_name,
             org_org_tree4.customer_name,
             org_org_tree3.customer_name,
             org_org_tree2.customer_name,
             org_org_tree1.customer_name
-        ) as "Org Org Lv6 Name",
-        coalesce(consol_org_tree1.customer_code, le_consol_org_tree1.customer_code) as "Org Consolidation Lv1 Code",
-        coalesce(consol_org_tree1.customer_name, le_consol_org_tree1.customer_name) as "Org Consolidation Lv1 Name",
-        coalesce(
+        ) AS "Org Org Lv6 Name",
+        COALESCE(consol_org_tree1.customer_code, le_consol_org_tree1.customer_code) AS "Org Consolidation Lv1 Code",
+        COALESCE(consol_org_tree1.customer_name, le_consol_org_tree1.customer_name) AS "Org Consolidation Lv1 Name",
+        COALESCE(
             consol_org_tree2.customer_code,
             consol_org_tree1.customer_code,
             le_consol_org_tree2.customer_code,
             le_consol_org_tree1.customer_code
-        ) as "Org Consolidation Lv2 Code",
-        coalesce(
+        ) AS "Org Consolidation Lv2 Code",
+        COALESCE(
             consol_org_tree2.customer_name,
             consol_org_tree1.customer_name,
             le_consol_org_tree2.customer_name,
             le_consol_org_tree1.customer_name
-        ) as "Org Consolidation Lv2 Name",
-        coalesce(
+        ) AS "Org Consolidation Lv2 Name",
+        COALESCE(
             consol_org_tree3.customer_code,
             consol_org_tree2.customer_code,
             consol_org_tree1.customer_code,
             le_consol_org_tree3.customer_code,
             le_consol_org_tree2.customer_code,
             le_consol_org_tree1.customer_code
-        ) as "Org Consolidation Lv3 Code",
-        coalesce(
+        ) AS "Org Consolidation Lv3 Code",
+        COALESCE(
             consol_org_tree3.customer_name,
             consol_org_tree2.customer_name,
             consol_org_tree1.customer_name,
             le_consol_org_tree3.customer_name,
             le_consol_org_tree2.customer_name,
             le_consol_org_tree1.customer_name
-        ) as "Org Consolidation Lv3 Name",
-        coalesce(
+        ) AS "Org Consolidation Lv3 Name",
+        COALESCE(
             consol_org_tree4.customer_code,
             consol_org_tree3.customer_code,
             consol_org_tree2.customer_code,
@@ -703,8 +687,8 @@ INNER JOIN (
             le_consol_org_tree3.customer_code,
             le_consol_org_tree2.customer_code,
             le_consol_org_tree1.customer_code
-        ) as "Org Consolidation Lv4 Code",
-        coalesce(
+        ) AS "Org Consolidation Lv4 Code",
+        COALESCE(
             consol_org_tree4.customer_name,
             consol_org_tree3.customer_name,
             consol_org_tree2.customer_name,
@@ -713,8 +697,8 @@ INNER JOIN (
             le_consol_org_tree3.customer_name,
             le_consol_org_tree2.customer_name,
             le_consol_org_tree1.customer_name
-        ) as "Org Consolidation Lv4 Name",
-        coalesce(
+        ) AS "Org Consolidation Lv4 Name",
+        COALESCE(
             consol_org_tree5.customer_code,
             consol_org_tree4.customer_code,
             consol_org_tree3.customer_code,
@@ -725,8 +709,8 @@ INNER JOIN (
             le_consol_org_tree3.customer_code,
             le_consol_org_tree2.customer_code,
             le_consol_org_tree1.customer_code
-        ) as "Org Consolidation Lv5 Code",
-        coalesce(
+        ) AS "Org Consolidation Lv5 Code",
+        COALESCE(
             consol_org_tree5.customer_name,
             consol_org_tree4.customer_name,
             consol_org_tree3.customer_name,
@@ -737,8 +721,8 @@ INNER JOIN (
             le_consol_org_tree3.customer_name,
             le_consol_org_tree2.customer_name,
             le_consol_org_tree1.customer_name
-        ) as "Org Consolidation Lv5 Name",
-        coalesce(
+        ) AS "Org Consolidation Lv5 Name",
+        COALESCE(
             consol_org_tree6.customer_code,
             consol_org_tree5.customer_code,
             consol_org_tree4.customer_code,
@@ -751,8 +735,8 @@ INNER JOIN (
             le_consol_org_tree3.customer_code,
             le_consol_org_tree2.customer_code,
             le_consol_org_tree1.customer_code
-        ) as "Org Consolidation Lv6 Code",
-        coalesce(
+        ) AS "Org Consolidation Lv6 Code",
+        COALESCE(
             consol_org_tree6.customer_name,
             consol_org_tree5.customer_name,
             consol_org_tree4.customer_name,
@@ -765,193 +749,191 @@ INNER JOIN (
             le_consol_org_tree3.customer_name,
             le_consol_org_tree2.customer_name,
             le_consol_org_tree1.customer_name
-        ) as "Org Consolidation Lv6 Name",
-        c.sector                           as "SECTOR",
-        c.customer_size                    as "CUSTOMER_SIZE",
-        c.stock_symbol                     as "STOCK_SYMBOL",
-        ct.customer_type                   as "CUSTOMER_TYPE",
-        c.user01                           as "Org User01",
-        c.user02                           as "Org User02",
-        c.user03                           as "Org User03",
-        c.user04                           as "Org User04",
-        c.user05                           as "Org User05",
-        c.user06                           as "Org User06",
-        c.user07                           as "Org User07",
-        c.user08                           as "Org User08",
-        c.user09                           as "Org User09",
-        c.user10                           as "Org User10",
-        c.user11                           as "Org User11",
-        c.user12                           as "Org User12",
-        c.user13                           as "Org User13",
-        c.user14                           as "Org User14",
-        c.user15                           as "Org User15",
-        c.user16                           as "Org User16",
-        c.user17                           as "Org User17",
-        c.user18                           as "Org User18",
-        c.user19                           as "Org User19",
-        c.user20                           as "Org User20",
-        cgl.customer_code                  as "LE Default Post Org",
-        cle.customer_code                  as "Org's Legal Entity Code",
-        c.transact_elimination_flag        as "Elimination Org Indicator"
-    from customer c
-    left outer join customer_type ct on ct.customer_type_key = c.customer_type_key
-    left outer join customer cgl on cgl.customer_key = c.default_gl_post_org_key
-    left outer join customer cle on cle.customer_key = c.legal_entity_key
-    left outer join (
-        select
-            c.node_key org_key,
-            max(case when p.tree_level = 0 then p.node_key else null end) org_key_0,
-            max(case when p.tree_level = 1 then p.node_key else null end) org_key_1,
-            max(case when p.tree_level = 2 then p.node_key else null end) org_key_2,
-            max(case when p.tree_level = 3 then p.node_key else null end) org_key_3,
-            max(case when p.tree_level = 4 then p.node_key else null end) org_key_4,
-            max(case when p.tree_level = 5 then p.node_key else null end) org_key_5
-        from org_cost_pool_tree c
-        join org_cost_pool_tree p on c.left_visit between p.left_visit and p.right_visit
-        group by c.node_key
-    ) org_cost_pool_tree_orgs on org_cost_pool_tree_orgs.org_key = c.customer_key
-    left outer join customer org_cost_pool_tree1 on org_cost_pool_tree1.customer_key = org_cost_pool_tree_orgs.org_key_0
-    left outer join customer org_cost_pool_tree2 on org_cost_pool_tree2.customer_key = org_cost_pool_tree_orgs.org_key_1
-    left outer join customer org_cost_pool_tree3 on org_cost_pool_tree3.customer_key = org_cost_pool_tree_orgs.org_key_2
-    left outer join customer org_cost_pool_tree4 on org_cost_pool_tree4.customer_key = org_cost_pool_tree_orgs.org_key_3
-    left outer join customer org_cost_pool_tree5 on org_cost_pool_tree5.customer_key = org_cost_pool_tree_orgs.org_key_4
-    left outer join customer org_cost_pool_tree6 on org_cost_pool_tree6.customer_key = org_cost_pool_tree_orgs.org_key_5
-    left outer join (
-        select
-            c.node_key org_key,
-            max(case when p.tree_level = 0 then p.node_key else null end) org_key_0,
-            max(case when p.tree_level = 1 then p.node_key else null end) org_key_1,
-            max(case when p.tree_level = 2 then p.node_key else null end) org_key_2,
-            max(case when p.tree_level = 3 then p.node_key else null end) org_key_3,
-            max(case when p.tree_level = 4 then p.node_key else null end) org_key_4,
-            max(case when p.tree_level = 5 then p.node_key else null end) org_key_5
-        from org_fin_tree c
-        join org_fin_tree p on c.left_visit between p.left_visit and p.right_visit
-        group by c.node_key
-    ) org_fin_tree_orgs on org_fin_tree_orgs.org_key = c.customer_key
-    left outer join customer org_fin_tree1 on org_fin_tree1.customer_key = org_fin_tree_orgs.org_key_0
-    left outer join customer org_fin_tree2 on org_fin_tree2.customer_key = org_fin_tree_orgs.org_key_1
-    left outer join customer org_fin_tree3 on org_fin_tree3.customer_key = org_fin_tree_orgs.org_key_2
-    left outer join customer org_fin_tree4 on org_fin_tree4.customer_key = org_fin_tree_orgs.org_key_3
-    left outer join customer org_fin_tree5 on org_fin_tree5.customer_key = org_fin_tree_orgs.org_key_4
-    left outer join customer org_fin_tree6 on org_fin_tree6.customer_key = org_fin_tree_orgs.org_key_5
-    left outer join (
-        select
-            c.node_key org_key,
-            max(case when p.tree_level = 0 then p.node_key else null end) org_key_0,
-            max(case when p.tree_level = 1 then p.node_key else null end) org_key_1,
-            max(case when p.tree_level = 2 then p.node_key else null end) org_key_2,
-            max(case when p.tree_level = 3 then p.node_key else null end) org_key_3,
-            max(case when p.tree_level = 4 then p.node_key else null end) org_key_4,
-            max(case when p.tree_level = 5 then p.node_key else null end) org_key_5
-        from org_tree c
-        join org_tree p on c.left_visit between p.left_visit and p.right_visit
-        group by c.node_key
-    ) org_org_tree_orgs on org_org_tree_orgs.org_key = c.customer_key
-    left outer join customer org_org_tree1 on org_org_tree1.customer_key = org_org_tree_orgs.org_key_0
-    left outer join customer org_org_tree2 on org_org_tree2.customer_key = org_org_tree_orgs.org_key_1
-    left outer join customer org_org_tree3 on org_org_tree3.customer_key = org_org_tree_orgs.org_key_2
-    left outer join customer org_org_tree4 on org_org_tree4.customer_key = org_org_tree_orgs.org_key_3
-    left outer join customer org_org_tree5 on org_org_tree5.customer_key = org_org_tree_orgs.org_key_4
-    left outer join customer org_org_tree6 on org_org_tree6.customer_key = org_org_tree_orgs.org_key_5
-    left outer join consol_tree_orgs le_consol_tree_orgs on le_consol_tree_orgs.org_key = cle.customer_key
-    left outer join customer le_consol_org_tree1 on le_consol_org_tree1.customer_key = le_consol_tree_orgs.org_key_0
-    left outer join customer le_consol_org_tree2 on le_consol_org_tree2.customer_key = le_consol_tree_orgs.org_key_1
-    left outer join customer le_consol_org_tree3 on le_consol_org_tree3.customer_key = le_consol_tree_orgs.org_key_2
-    left outer join customer le_consol_org_tree4 on le_consol_org_tree4.customer_key = le_consol_tree_orgs.org_key_3
-    left outer join customer le_consol_org_tree5 on le_consol_org_tree5.customer_key = le_consol_tree_orgs.org_key_4
-    left outer join customer le_consol_org_tree6 on le_consol_org_tree6.customer_key = le_consol_tree_orgs.org_key_5
-    left outer join consol_tree_orgs org_consol_tree_orgs on org_consol_tree_orgs.org_key = c.customer_key
-    left outer join customer consol_org_tree1 on consol_org_tree1.customer_key = org_consol_tree_orgs.org_key_0
-    left outer join customer consol_org_tree2 on consol_org_tree2.customer_key = org_consol_tree_orgs.org_key_1
-    left outer join customer consol_org_tree3 on consol_org_tree3.customer_key = org_consol_tree_orgs.org_key_2
-    left outer join customer consol_org_tree4 on consol_org_tree4.customer_key = org_consol_tree_orgs.org_key_3
-    left outer join customer consol_org_tree5 on consol_org_tree5.customer_key = org_consol_tree_orgs.org_key_4
-    left outer join customer consol_org_tree6 on consol_org_tree6.customer_key = org_consol_tree_orgs.org_key_5
-    where c.customer_key is not null
-) wrE8 ON (
-    wrE20."Organization Key" = wrE8."CUSTOMER_KEY"
-)
+        ) AS "Org Consolidation Lv6 Name",
+        c.sector                           AS "SECTOR",
+        c.customer_size                    AS "CUSTOMER_SIZE",
+        c.stock_symbol                     AS "STOCK_SYMBOL",
+        ct.customer_type                   AS "CUSTOMER_TYPE",
+        c.user01                           AS "Org User01",
+        c.user02                           AS "Org User02",
+        c.user03                           AS "Org User03",
+        c.user04                           AS "Org User04",
+        c.user05                           AS "Org User05",
+        c.user06                           AS "Org User06",
+        c.user07                           AS "Org User07",
+        c.user08                           AS "Org User08",
+        c.user09                           AS "Org User09",
+        c.user10                           AS "Org User10",
+        c.user11                           AS "Org User11",
+        c.user12                           AS "Org User12",
+        c.user13                           AS "Org User13",
+        c.user14                           AS "Org User14",
+        c.user15                           AS "Org User15",
+        c.user16                           AS "Org User16",
+        c.user17                           AS "Org User17",
+        c.user18                           AS "Org User18",
+        c.user19                           AS "Org User19",
+        c.user20                           AS "Org User20",
+        cgl.customer_code                  AS "LE Default Post Org",
+        cle.customer_code                  AS "Org's Legal Entity Code",
+        c.transact_elimination_flag        AS "Elimination Org Indicator"
+    FROM [dbo].["aretum"."customer"] c
+    LEFT OUTER JOIN [dbo].["aretum"."customer_type"] ct ON ct.customer_type_key = c.customer_type_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] cgl ON cgl.customer_key = c.default_gl_post_org_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] cle ON cle.customer_key = c.legal_entity_key
+    LEFT OUTER JOIN (
+        SELECT
+            c.node_key AS org_key,
+            MAX(CASE WHEN p.tree_level = 0 THEN p.node_key END) AS org_key_0,
+            MAX(CASE WHEN p.tree_level = 1 THEN p.node_key END) AS org_key_1,
+            MAX(CASE WHEN p.tree_level = 2 THEN p.node_key END) AS org_key_2,
+            MAX(CASE WHEN p.tree_level = 3 THEN p.node_key END) AS org_key_3,
+            MAX(CASE WHEN p.tree_level = 4 THEN p.node_key END) AS org_key_4,
+            MAX(CASE WHEN p.tree_level = 5 THEN p.node_key END) AS org_key_5
+        FROM [dbo].["aretum"."org_cost_pool_tree"] c
+        JOIN [dbo].["aretum"."org_cost_pool_tree"] p ON c.left_visit BETWEEN p.left_visit AND p.right_visit
+        GROUP BY c.node_key
+    ) org_cost_pool_tree_orgs ON org_cost_pool_tree_orgs.org_key = c.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_cost_pool_tree1 ON org_cost_pool_tree1.customer_key = org_cost_pool_tree_orgs.org_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_cost_pool_tree2 ON org_cost_pool_tree2.customer_key = org_cost_pool_tree_orgs.org_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_cost_pool_tree3 ON org_cost_pool_tree3.customer_key = org_cost_pool_tree_orgs.org_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_cost_pool_tree4 ON org_cost_pool_tree4.customer_key = org_cost_pool_tree_orgs.org_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_cost_pool_tree5 ON org_cost_pool_tree5.customer_key = org_cost_pool_tree_orgs.org_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_cost_pool_tree6 ON org_cost_pool_tree6.customer_key = org_cost_pool_tree_orgs.org_key_5
+    LEFT OUTER JOIN (
+        SELECT
+            c.node_key AS org_key,
+            MAX(CASE WHEN p.tree_level = 0 THEN p.node_key END) AS org_key_0,
+            MAX(CASE WHEN p.tree_level = 1 THEN p.node_key END) AS org_key_1,
+            MAX(CASE WHEN p.tree_level = 2 THEN p.node_key END) AS org_key_2,
+            MAX(CASE WHEN p.tree_level = 3 THEN p.node_key END) AS org_key_3,
+            MAX(CASE WHEN p.tree_level = 4 THEN p.node_key END) AS org_key_4,
+            MAX(CASE WHEN p.tree_level = 5 THEN p.node_key END) AS org_key_5
+        FROM [dbo].["aretum"."org_fin_tree"] c
+        JOIN [dbo].["aretum"."org_fin_tree"] p ON c.left_visit BETWEEN p.left_visit AND p.right_visit
+        GROUP BY c.node_key
+    ) org_fin_tree_orgs ON org_fin_tree_orgs.org_key = c.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_fin_tree1 ON org_fin_tree1.customer_key = org_fin_tree_orgs.org_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_fin_tree2 ON org_fin_tree2.customer_key = org_fin_tree_orgs.org_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_fin_tree3 ON org_fin_tree3.customer_key = org_fin_tree_orgs.org_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_fin_tree4 ON org_fin_tree4.customer_key = org_fin_tree_orgs.org_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_fin_tree5 ON org_fin_tree5.customer_key = org_fin_tree_orgs.org_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_fin_tree6 ON org_fin_tree6.customer_key = org_fin_tree_orgs.org_key_5
+    LEFT OUTER JOIN (
+        SELECT
+            c.node_key AS org_key,
+            MAX(CASE WHEN p.tree_level = 0 THEN p.node_key END) AS org_key_0,
+            MAX(CASE WHEN p.tree_level = 1 THEN p.node_key END) AS org_key_1,
+            MAX(CASE WHEN p.tree_level = 2 THEN p.node_key END) AS org_key_2,
+            MAX(CASE WHEN p.tree_level = 3 THEN p.node_key END) AS org_key_3,
+            MAX(CASE WHEN p.tree_level = 4 THEN p.node_key END) AS org_key_4,
+            MAX(CASE WHEN p.tree_level = 5 THEN p.node_key END) AS org_key_5
+        FROM [dbo].["aretum"."org_tree"] c
+        JOIN [dbo].["aretum"."org_tree"] p ON c.left_visit BETWEEN p.left_visit AND p.right_visit
+        GROUP BY c.node_key
+    ) org_org_tree_orgs ON org_org_tree_orgs.org_key = c.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_org_tree1 ON org_org_tree1.customer_key = org_org_tree_orgs.org_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_org_tree2 ON org_org_tree2.customer_key = org_org_tree_orgs.org_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_org_tree3 ON org_org_tree3.customer_key = org_org_tree_orgs.org_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_org_tree4 ON org_org_tree4.customer_key = org_org_tree_orgs.org_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_org_tree5 ON org_org_tree5.customer_key = org_org_tree_orgs.org_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] org_org_tree6 ON org_org_tree6.customer_key = org_org_tree_orgs.org_key_5
+    LEFT OUTER JOIN consol_tree_orgs le_consol_tree_orgs ON le_consol_tree_orgs.org_key = cle.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] le_consol_org_tree1 ON le_consol_org_tree1.customer_key = le_consol_tree_orgs.org_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] le_consol_org_tree2 ON le_consol_org_tree2.customer_key = le_consol_tree_orgs.org_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] le_consol_org_tree3 ON le_consol_org_tree3.customer_key = le_consol_tree_orgs.org_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] le_consol_org_tree4 ON le_consol_org_tree4.customer_key = le_consol_tree_orgs.org_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] le_consol_org_tree5 ON le_consol_org_tree5.customer_key = le_consol_tree_orgs.org_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] le_consol_org_tree6 ON le_consol_org_tree6.customer_key = le_consol_tree_orgs.org_key_5
+    LEFT OUTER JOIN consol_tree_orgs org_consol_tree_orgs ON org_consol_tree_orgs.org_key = c.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] consol_org_tree1 ON consol_org_tree1.customer_key = org_consol_tree_orgs.org_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] consol_org_tree2 ON consol_org_tree2.customer_key = org_consol_tree_orgs.org_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] consol_org_tree3 ON consol_org_tree3.customer_key = org_consol_tree_orgs.org_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] consol_org_tree4 ON consol_org_tree4.customer_key = org_consol_tree_orgs.org_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] consol_org_tree5 ON consol_org_tree5.customer_key = org_consol_tree_orgs.org_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] consol_org_tree6 ON consol_org_tree6.customer_key = org_consol_tree_orgs.org_key_5
+    WHERE c.customer_key IS NOT NULL
+) wrE8 ON (wrE20."Organization Key" = wrE8."CUSTOMER_KEY")
 INNER JOIN (
-    select
-        a.account_key                as "ACCOUNT_KEY",
-        a.account_code               as "Acct Code",
-        a.description                as "Acct Description",
-        case a.type
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                         as "Acct Type",
-        case a.type
-            when 'A' then 1
-            when 'L' then 2
-            when 'R' then 3
-            when 'E' then 4
-        end                         as "Acct Type Order",
-        a.active                    as "Acct Active",
-        a.entry_allowed             as "Acct Entry Allowed",
-        a.begin_date                as "Acct Begin Date",
-        a.end_date                  as "Acct End Date",
-        a.project_required          as "Acct Proj Required",
-        acct_fin_tree1.account_code as "Acct Fin Lv1 Code",
-        acct_fin_tree1.description  as "Acct Fin Lv1 Name",
-        coalesce(acct_fin_tree2.account_code, acct_fin_tree1.account_code) as "Acct Fin Lv2 Code",
-        coalesce(acct_fin_tree2.description, acct_fin_tree1.description)   as "Acct Fin Lv2 Name",
-        coalesce(
+    SELECT
+        a.account_key                AS "ACCOUNT_KEY",
+        a.account_code               AS "Acct Code",
+        a.description                AS "Acct Description",
+        CASE a.type
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                         AS "Acct Type",
+        CASE a.type
+            WHEN 'A' THEN 1
+            WHEN 'L' THEN 2
+            WHEN 'R' THEN 3
+            WHEN 'E' THEN 4
+        END                         AS "Acct Type Order",
+        a.active                    AS "Acct Active",
+        a.entry_allowed             AS "Acct Entry Allowed",
+        a.begin_date                AS "Acct Begin Date",
+        a.end_date                  AS "Acct End Date",
+        a.project_required          AS "Acct Proj Required",
+        acct_fin_tree1.account_code AS "Acct Fin Lv1 Code",
+        acct_fin_tree1.description  AS "Acct Fin Lv1 Name",
+        COALESCE(acct_fin_tree2.account_code, acct_fin_tree1.account_code) AS "Acct Fin Lv2 Code",
+        COALESCE(acct_fin_tree2.description, acct_fin_tree1.description)   AS "Acct Fin Lv2 Name",
+        COALESCE(
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv3 Code",
-        coalesce(
+        ) AS "Acct Fin Lv3 Code",
+        COALESCE(
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv3 Name",
-        coalesce(
+        ) AS "Acct Fin Lv3 Name",
+        COALESCE(
             acct_fin_tree4.account_code,
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv4 Code",
-        coalesce(
+        ) AS "Acct Fin Lv4 Code",
+        COALESCE(
             acct_fin_tree4.description,
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv4 Name",
-        coalesce(
+        ) AS "Acct Fin Lv4 Name",
+        COALESCE(
             acct_fin_tree5.account_code,
             acct_fin_tree4.account_code,
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv5 Code",
-        coalesce(
+        ) AS "Acct Fin Lv5 Code",
+        COALESCE(
             acct_fin_tree5.description,
             acct_fin_tree4.description,
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv5 Name",
-        coalesce(
+        ) AS "Acct Fin Lv5 Name",
+        COALESCE(
             acct_fin_tree6.account_code,
             acct_fin_tree5.account_code,
             acct_fin_tree4.account_code,
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv6 Code",
-        coalesce(
+        ) AS "Acct Fin Lv6 Code",
+        COALESCE(
             acct_fin_tree6.description,
             acct_fin_tree5.description,
             acct_fin_tree4.description,
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv6 Name",
-        coalesce(
+        ) AS "Acct Fin Lv6 Name",
+        COALESCE(
             acct_fin_tree7.account_code,
             acct_fin_tree6.account_code,
             acct_fin_tree5.account_code,
@@ -959,8 +941,8 @@ INNER JOIN (
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv7 Code",
-        coalesce(
+        ) AS "Acct Fin Lv7 Code",
+        COALESCE(
             acct_fin_tree7.description,
             acct_fin_tree6.description,
             acct_fin_tree5.description,
@@ -968,8 +950,8 @@ INNER JOIN (
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv7 Name",
-        coalesce(
+        ) AS "Acct Fin Lv7 Name",
+        COALESCE(
             acct_fin_tree8.account_code,
             acct_fin_tree7.account_code,
             acct_fin_tree6.account_code,
@@ -978,8 +960,8 @@ INNER JOIN (
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv8 Code",
-        coalesce(
+        ) AS "Acct Fin Lv8 Code",
+        COALESCE(
             acct_fin_tree8.description,
             acct_fin_tree7.description,
             acct_fin_tree6.description,
@@ -988,8 +970,8 @@ INNER JOIN (
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv8 Name",
-        coalesce(
+        ) AS "Acct Fin Lv8 Name",
+        COALESCE(
             acct_fin_tree9.account_code,
             acct_fin_tree8.account_code,
             acct_fin_tree7.account_code,
@@ -999,8 +981,8 @@ INNER JOIN (
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv9 Code",
-        coalesce(
+        ) AS "Acct Fin Lv9 Code",
+        COALESCE(
             acct_fin_tree9.description,
             acct_fin_tree8.description,
             acct_fin_tree7.description,
@@ -1010,8 +992,8 @@ INNER JOIN (
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv9 Name",
-        coalesce(
+        ) AS "Acct Fin Lv9 Name",
+        COALESCE(
             acct_fin_tree10.account_code,
             acct_fin_tree9.account_code,
             acct_fin_tree8.account_code,
@@ -1022,8 +1004,8 @@ INNER JOIN (
             acct_fin_tree3.account_code,
             acct_fin_tree2.account_code,
             acct_fin_tree1.account_code
-        ) as "Acct Fin Lv10 Code",
-        coalesce(
+        ) AS "Acct Fin Lv10 Code",
+        COALESCE(
             acct_fin_tree10.description,
             acct_fin_tree9.description,
             acct_fin_tree8.description,
@@ -1034,99 +1016,99 @@ INNER JOIN (
             acct_fin_tree3.description,
             acct_fin_tree2.description,
             acct_fin_tree1.description
-        ) as "Acct Fin Lv10 Name",
-        acct_cp_tree1.account_code         as "Acct Cost Pool Lv1 Code",
-        acct_cp_tree1.description          as "Acct Cost Pool Lv1 Name",
-        case acct_fin_tree1.type
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv1 Type",
-        coalesce(acct_cp_tree2.account_code, acct_cp_tree1.account_code) as "Acct Cost Pool Lv2 Code",
-        coalesce(acct_cp_tree2.description, acct_cp_tree1.description)   as "Acct Cost Pool Lv2 Name",
-        case coalesce(acct_fin_tree2.type, acct_fin_tree1.type)
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv2 Type",
-        coalesce(
+        ) AS "Acct Fin Lv10 Name",
+        acct_cp_tree1.account_code         AS "Acct Cost Pool Lv1 Code",
+        acct_cp_tree1.description          AS "Acct Cost Pool Lv1 Name",
+        CASE acct_fin_tree1.type
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv1 Type",
+        COALESCE(acct_cp_tree2.account_code, acct_cp_tree1.account_code) AS "Acct Cost Pool Lv2 Code",
+        COALESCE(acct_cp_tree2.description, acct_cp_tree1.description)   AS "Acct Cost Pool Lv2 Name",
+        CASE COALESCE(acct_fin_tree2.type, acct_fin_tree1.type)
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv2 Type",
+        COALESCE(
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv3 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv3 Code",
+        COALESCE(
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv3 Name",
-        case coalesce(acct_fin_tree3.type, acct_fin_tree2.type, acct_fin_tree1.type)
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv3 Type",
-        coalesce(
+        ) AS "Acct Cost Pool Lv3 Name",
+        CASE COALESCE(acct_fin_tree3.type, acct_fin_tree2.type, acct_fin_tree1.type)
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv3 Type",
+        COALESCE(
             acct_cp_tree4.account_code,
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv4 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv4 Code",
+        COALESCE(
             acct_cp_tree4.description,
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv4 Name",
-        case coalesce(acct_fin_tree4.type, acct_fin_tree3.type, acct_fin_tree2.type, acct_fin_tree1.type)
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv4 Type",
-        coalesce(
+        ) AS "Acct Cost Pool Lv4 Name",
+        CASE COALESCE(acct_fin_tree4.type, acct_fin_tree3.type, acct_fin_tree2.type, acct_fin_tree1.type)
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv4 Type",
+        COALESCE(
             acct_cp_tree5.account_code,
             acct_cp_tree4.account_code,
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv5 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv5 Code",
+        COALESCE(
             acct_cp_tree5.description,
             acct_cp_tree4.description,
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv5 Name",
-        case coalesce(acct_fin_tree5.type, acct_fin_tree4.type, acct_fin_tree3.type, acct_fin_tree2.type, acct_fin_tree1.type)
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv5 Type",
-        coalesce(
+        ) AS "Acct Cost Pool Lv5 Name",
+        CASE COALESCE(acct_fin_tree5.type, acct_fin_tree4.type, acct_fin_tree3.type, acct_fin_tree2.type, acct_fin_tree1.type)
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv5 Type",
+        COALESCE(
             acct_cp_tree6.account_code,
             acct_cp_tree5.account_code,
             acct_cp_tree4.account_code,
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv6 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv6 Code",
+        COALESCE(
             acct_cp_tree6.description,
             acct_cp_tree5.description,
             acct_cp_tree4.description,
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv6 Name",
-        case coalesce(
+        ) AS "Acct Cost Pool Lv6 Name",
+        CASE COALESCE(
             acct_fin_tree6.type,
             acct_fin_tree5.type,
             acct_fin_tree4.type,
@@ -1134,13 +1116,13 @@ INNER JOIN (
             acct_fin_tree2.type,
             acct_fin_tree1.type
         )
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv6 Type",
-        coalesce(
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv6 Type",
+        COALESCE(
             acct_cp_tree7.account_code,
             acct_cp_tree6.account_code,
             acct_cp_tree5.account_code,
@@ -1148,8 +1130,8 @@ INNER JOIN (
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv7 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv7 Code",
+        COALESCE(
             acct_cp_tree7.description,
             acct_cp_tree6.description,
             acct_cp_tree5.description,
@@ -1157,8 +1139,8 @@ INNER JOIN (
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv7 Name",
-        case coalesce(
+        ) AS "Acct Cost Pool Lv7 Name",
+        CASE COALESCE(
             acct_fin_tree7.type,
             acct_fin_tree6.type,
             acct_fin_tree5.type,
@@ -1167,13 +1149,13 @@ INNER JOIN (
             acct_fin_tree2.type,
             acct_fin_tree1.type
         )
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv7 Type",
-        coalesce(
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv7 Type",
+        COALESCE(
             acct_cp_tree8.account_code,
             acct_cp_tree7.account_code,
             acct_cp_tree6.account_code,
@@ -1182,8 +1164,8 @@ INNER JOIN (
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv8 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv8 Code",
+        COALESCE(
             acct_cp_tree8.description,
             acct_cp_tree7.description,
             acct_cp_tree6.description,
@@ -1192,8 +1174,8 @@ INNER JOIN (
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv8 Name",
-        case coalesce(
+        ) AS "Acct Cost Pool Lv8 Name",
+        CASE COALESCE(
             acct_fin_tree8.type,
             acct_fin_tree7.type,
             acct_fin_tree6.type,
@@ -1203,13 +1185,13 @@ INNER JOIN (
             acct_fin_tree2.type,
             acct_fin_tree1.type
         )
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv8 Type",
-        coalesce(
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv8 Type",
+        COALESCE(
             acct_cp_tree9.account_code,
             acct_cp_tree8.account_code,
             acct_cp_tree7.account_code,
@@ -1219,8 +1201,8 @@ INNER JOIN (
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv9 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv9 Code",
+        COALESCE(
             acct_cp_tree9.description,
             acct_cp_tree8.description,
             acct_cp_tree7.description,
@@ -1230,8 +1212,8 @@ INNER JOIN (
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv9 Name",
-        case coalesce(
+        ) AS "Acct Cost Pool Lv9 Name",
+        CASE COALESCE(
             acct_fin_tree9.type,
             acct_fin_tree8.type,
             acct_fin_tree7.type,
@@ -1242,13 +1224,13 @@ INNER JOIN (
             acct_fin_tree2.type,
             acct_fin_tree1.type
         )
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv9 Type",
-        coalesce(
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv9 Type",
+        COALESCE(
             acct_cp_tree10.account_code,
             acct_cp_tree9.account_code,
             acct_cp_tree8.account_code,
@@ -1259,8 +1241,8 @@ INNER JOIN (
             acct_cp_tree3.account_code,
             acct_cp_tree2.account_code,
             acct_cp_tree1.account_code
-        ) as "Acct Cost Pool Lv10 Code",
-        coalesce(
+        ) AS "Acct Cost Pool Lv10 Code",
+        COALESCE(
             acct_cp_tree10.description,
             acct_cp_tree9.description,
             acct_cp_tree8.description,
@@ -1271,8 +1253,8 @@ INNER JOIN (
             acct_cp_tree3.description,
             acct_cp_tree2.description,
             acct_cp_tree1.description
-        ) as "Acct Cost Pool Lv10 Name",
-        case coalesce(
+        ) AS "Acct Cost Pool Lv10 Name",
+        CASE COALESCE(
             acct_fin_tree10.type,
             acct_fin_tree9.type,
             acct_fin_tree8.type,
@@ -1284,675 +1266,657 @@ INNER JOIN (
             acct_fin_tree2.type,
             acct_fin_tree1.type
         )
-            when 'A' then 'Asset'
-            when 'E' then 'Expense'
-            when 'L' then 'Liability'
-            when 'R' then 'Revenue'
-            else 'Unknown Account Type'
-        end                                 as "Acct Fin Lv10 Type",
-        a.hide_income_stmt_hdr              as "Acct Hide Income Stmt Hdr",
-        a.category_1099                     as "Acct Cat 1099",
-        case ca.category
-            when 'O' then 'Operating Activities'
-            when 'I' then 'Investing Activities'
-            when 'F' then 'Financing Activities'
-            when 'C' then 'Cash'
-            else ' '
-        end                                 as "Cash Flow Category",
+            WHEN 'A' THEN 'Asset'
+            WHEN 'E' THEN 'Expense'
+            WHEN 'L' THEN 'Liability'
+            WHEN 'R' THEN 'Revenue'
+            ELSE 'Unknown Account Type'
+        END                                 AS "Acct Fin Lv10 Type",
+        a.hide_income_stmt_hdr              AS "Acct Hide Income Stmt Hdr",
+        a.category_1099                     AS "Acct Cat 1099",
+        CASE ca.category
+            WHEN 'O' THEN 'Operating Activities'
+            WHEN 'I' THEN 'Investing Activities'
+            WHEN 'F' THEN 'Financing Activities'
+            WHEN 'C' THEN 'Cash'
+            ELSE ' '
+        END                                 AS "Cash Flow Category",
         CASE
-            WHEN ca.category in('O', 'I', 'F', 'C')
-                THEN coalesce(rollup_account.account_code,a.account_code)
+            WHEN ca.category IN ('O','I','F','C')
+                THEN COALESCE(rollup_account.account_code,a.account_code)
             ELSE rollup_account.account_code
-        END                                 as "CFR Account Code",
+        END                                 AS "CFR Account Code",
         CASE
-            WHEN ca.category in('O', 'I', 'F', 'C')
-                THEN coalesce(rollup_account.description,a.description)
+            WHEN ca.category IN ('O','I','F','C')
+                THEN COALESCE(rollup_account.description,a.description)
             ELSE rollup_account.description
-        END                                 as "CFR Account Description"
-    from account a
-    left outer join (
-        select
-            acpt.node_key acct_key,
-            max(case when p.tree_level = 0 then p.node_key else null end) acct_key_0,
-            max(case when p.tree_level = 1 then p.node_key else null end) acct_key_1,
-            max(case when p.tree_level = 2 then p.node_key else null end) acct_key_2,
-            max(case when p.tree_level = 3 then p.node_key else null end) acct_key_3,
-            max(case when p.tree_level = 4 then p.node_key else null end) acct_key_4,
-            max(case when p.tree_level = 5 then p.node_key else null end) acct_key_5,
-            max(case when p.tree_level = 6 then p.node_key else null end) acct_key_6,
-            max(case when p.tree_level = 7 then p.node_key else null end) acct_key_7,
-            max(case when p.tree_level = 8 then p.node_key else null end) acct_key_8,
-            max(case when p.tree_level = 9 then p.node_key else null end) acct_key_9
-        from acct_cost_pool_tree acpt
-        join acct_cost_pool_tree p on acpt.left_visit between p.left_visit and p.right_visit
-        group by acpt.node_key
-    ) acct_cp_tree_accts on acct_cp_tree_accts.acct_key = a.account_key
-    left outer join account acct_cp_tree1 on acct_cp_tree1.account_key = acct_cp_tree_accts.acct_key_0
-    left outer join account acct_cp_tree2 on acct_cp_tree2.account_key = acct_cp_tree_accts.acct_key_1
-    left outer join account acct_cp_tree3 on acct_cp_tree3.account_key = acct_cp_tree_accts.acct_key_2
-    left outer join account acct_cp_tree4 on acct_cp_tree4.account_key = acct_cp_tree_accts.acct_key_3
-    left outer join account acct_cp_tree5 on acct_cp_tree5.account_key = acct_cp_tree_accts.acct_key_4
-    left outer join account acct_cp_tree6 on acct_cp_tree6.account_key = acct_cp_tree_accts.acct_key_5
-    left outer join account acct_cp_tree7 on acct_cp_tree7.account_key = acct_cp_tree_accts.acct_key_6
-    left outer join account acct_cp_tree8 on acct_cp_tree8.account_key = acct_cp_tree_accts.acct_key_7
-    left outer join account acct_cp_tree9 on acct_cp_tree9.account_key = acct_cp_tree_accts.acct_key_8
-    left outer join account acct_cp_tree10 on acct_cp_tree10.account_key = acct_cp_tree_accts.acct_key_9
-    left outer join (
-        select
-            aft.node_key acct_key,
-            max(case when p.tree_level = 0 then p.node_key else null end) acct_key_0,
-            max(case when p.tree_level = 1 then p.node_key else null end) acct_key_1,
-            max(case when p.tree_level = 2 then p.node_key else null end) acct_key_2,
-            max(case when p.tree_level = 3 then p.node_key else null end) acct_key_3,
-            max(case when p.tree_level = 4 then p.node_key else null end) acct_key_4,
-            max(case when p.tree_level = 5 then p.node_key else null end) acct_key_5,
-            max(case when p.tree_level = 6 then p.node_key else null end) acct_key_6,
-            max(case when p.tree_level = 7 then p.node_key else null end) acct_key_7,
-            max(case when p.tree_level = 8 then p.node_key else null end) acct_key_8,
-            max(case when p.tree_level = 9 then p.node_key else null end) acct_key_9
-        from acct_fin_tree aft
-        join acct_fin_tree p on aft.left_visit between p.left_visit and p.right_visit
-        group by aft.node_key
-    ) acct_fin_tree_accts on acct_fin_tree_accts.acct_key = a.account_key
-    left outer join account acct_fin_tree1 on acct_fin_tree1.account_key = acct_fin_tree_accts.acct_key_0
-    left outer join account acct_fin_tree2 on acct_fin_tree2.account_key = acct_fin_tree_accts.acct_key_1
-    left outer join account acct_fin_tree3 on acct_fin_tree3.account_key = acct_fin_tree_accts.acct_key_2
-    left outer join account acct_fin_tree4 on acct_fin_tree4.account_key = acct_fin_tree_accts.acct_key_3
-    left outer join account acct_fin_tree5 on acct_fin_tree5.account_key = acct_fin_tree_accts.acct_key_4
-    left outer join account acct_fin_tree6 on acct_fin_tree6.account_key = acct_fin_tree_accts.acct_key_5
-    left outer join account acct_fin_tree7 on acct_fin_tree7.account_key = acct_fin_tree_accts.acct_key_6
-    left outer join account acct_fin_tree8 on acct_fin_tree8.account_key = acct_fin_tree_accts.acct_key_7
-    left outer join account acct_fin_tree9 on acct_fin_tree9.account_key = acct_fin_tree_accts.acct_key_8
-    left outer join account acct_fin_tree10 on acct_fin_tree10.account_key = acct_fin_tree_accts.acct_key_9
-    left outer join cashflow_account ca on a.account_key = ca.cashflow_account_key
-    left outer join account rollup_account on rollup_account.account_key = ca.rollup_account_key
-) wrE18 ON (
-    wrE20."Acct Key" = wrE18."ACCOUNT_KEY"
-)
+        END                                 AS "CFR Account Description"
+    FROM [dbo].["aretum"."account"] a
+    LEFT OUTER JOIN (
+        SELECT
+            acpt.node_key AS acct_key,
+            MAX(CASE WHEN p.tree_level = 0 THEN p.node_key END) AS acct_key_0,
+            MAX(CASE WHEN p.tree_level = 1 THEN p.node_key END) AS acct_key_1,
+            MAX(CASE WHEN p.tree_level = 2 THEN p.node_key END) AS acct_key_2,
+            MAX(CASE WHEN p.tree_level = 3 THEN p.node_key END) AS acct_key_3,
+            MAX(CASE WHEN p.tree_level = 4 THEN p.node_key END) AS acct_key_4,
+            MAX(CASE WHEN p.tree_level = 5 THEN p.node_key END) AS acct_key_5,
+            MAX(CASE WHEN p.tree_level = 6 THEN p.node_key END) AS acct_key_6,
+            MAX(CASE WHEN p.tree_level = 7 THEN p.node_key END) AS acct_key_7,
+            MAX(CASE WHEN p.tree_level = 8 THEN p.node_key END) AS acct_key_8,
+            MAX(CASE WHEN p.tree_level = 9 THEN p.node_key END) AS acct_key_9
+        FROM [dbo].["aretum"."acct_cost_pool_tree"] acpt
+        JOIN [dbo].["aretum"."acct_cost_pool_tree"] p ON acpt.left_visit BETWEEN p.left_visit AND p.right_visit
+        GROUP BY acpt.node_key
+    ) acct_cp_tree_accts ON acct_cp_tree_accts.acct_key = a.account_key
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree1 ON acct_cp_tree1.account_key = acct_cp_tree_accts.acct_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree2 ON acct_cp_tree2.account_key = acct_cp_tree_accts.acct_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree3 ON acct_cp_tree3.account_key = acct_cp_tree_accts.acct_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree4 ON acct_cp_tree4.account_key = acct_cp_tree_accts.acct_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree5 ON acct_cp_tree5.account_key = acct_cp_tree_accts.acct_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree6 ON acct_cp_tree6.account_key = acct_cp_tree_accts.acct_key_5
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree7 ON acct_cp_tree7.account_key = acct_cp_tree_accts.acct_key_6
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree8 ON acct_cp_tree8.account_key = acct_cp_tree_accts.acct_key_7
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree9 ON acct_cp_tree9.account_key = acct_cp_tree_accts.acct_key_8
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_cp_tree10 ON acct_cp_tree10.account_key = acct_cp_tree_accts.acct_key_9
+    LEFT OUTER JOIN (
+        SELECT
+            aft.node_key AS acct_key,
+            MAX(CASE WHEN p.tree_level = 0 THEN p.node_key END) AS acct_key_0,
+            MAX(CASE WHEN p.tree_level = 1 THEN p.node_key END) AS acct_key_1,
+            MAX(CASE WHEN p.tree_level = 2 THEN p.node_key END) AS acct_key_2,
+            MAX(CASE WHEN p.tree_level = 3 THEN p.node_key END) AS acct_key_3,
+            MAX(CASE WHEN p.tree_level = 4 THEN p.node_key END) AS acct_key_4,
+            MAX(CASE WHEN p.tree_level = 5 THEN p.tree_level END) AS acct_key_5,
+            MAX(CASE WHEN p.tree_level = 6 THEN p.node_key END) AS acct_key_6,
+            MAX(CASE WHEN p.tree_level = 7 THEN p.node_key END) AS acct_key_7,
+            MAX(CASE WHEN p.tree_level = 8 THEN p.node_key END) AS acct_key_8,
+            MAX(CASE WHEN p.tree_level = 9 THEN p.node_key END) AS acct_key_9
+        FROM [dbo].["aretum"."acct_fin_tree"] aft
+        JOIN [dbo].["aretum"."acct_fin_tree"] p ON aft.left_visit BETWEEN p.left_visit AND p.right_visit
+        GROUP BY aft.node_key
+    ) acct_fin_tree_accts ON acct_fin_tree_accts.acct_key = a.account_key
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree1 ON acct_fin_tree1.account_key = acct_fin_tree_accts.acct_key_0
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree2 ON acct_fin_tree2.account_key = acct_fin_tree_accts.acct_key_1
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree3 ON acct_fin_tree3.account_key = acct_fin_tree_accts.acct_key_2
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree4 ON acct_fin_tree4.account_key = acct_fin_tree_accts.acct_key_3
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree5 ON acct_fin_tree5.account_key = acct_fin_tree_accts.acct_key_4
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree6 ON acct_fin_tree6.account_key = acct_fin_tree_accts.acct_key_5
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree7 ON acct_fin_tree7.account_key = acct_fin_tree_accts.acct_key_6
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree8 ON acct_fin_tree8.account_key = acct_fin_tree_accts.acct_key_7
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree9 ON acct_fin_tree9.account_key = acct_fin_tree_accts.acct_key_8
+    LEFT OUTER JOIN [dbo].["aretum"."account"] acct_fin_tree10 ON acct_fin_tree10.account_key = acct_fin_tree_accts.acct_key_9
+    LEFT OUTER JOIN [dbo].["aretum"."cashflow_account"] ca ON a.account_key = ca.cashflow_account_key
+    LEFT OUTER JOIN [dbo].["aretum"."account"] rollup_account ON rollup_account.account_key = ca.rollup_account_key
+) wrE18 ON (wrE20."Acct Key" = wrE18."ACCOUNT_KEY")
 INNER JOIN (
-    select
-        fm.fiscal_month_key         as "Fiscal Month Key",
-        fm.period_number            as "Fiscal Month",
-        fm.begin_date               as "Fiscal Month Begin Date",
-        fm.end_date                 as "Fiscal Month End Date",
-        case
-            when fm.period_number < 10
-                then concat(concat(concat(fy.name,'-'),'0'),cast(fm.period_number as varchar(4)))
-            else concat(concat(fy.name,'-'),cast(fm.period_number as varchar(4)))
-        end                         as "Fiscal Period",
-        case
-            when fm.period_number in (1,2,3) then 'Q1'
-            when fm.period_number in (4,5,6) then 'Q2'
-            when fm.period_number in (7,8,9) then 'Q3'
-            when fm.period_number in (10,11,12) then 'Q4'
-        end                         as "Fiscal Quarter",
-        fq.begin_date               as "Fiscal Quarter Begin Date",
-        fq.end_date                 as "Fiscal Quarter End Date",
-        fy.name                     as "Fiscal Year",
-        fy.begin_date               as "Fiscal Year Begin Date",
-        fy.end_date                 as "Fiscal Year End Date"
-    from fiscal_month fm
-    join fiscal_year fy on fy.fiscal_year_key = fm.fiscal_year_key
-    join fiscal_quarter fq on fq.fiscal_quarter_key = fm.fiscal_quarter_key
-) wrE19 ON (
-    wrE20."Fiscal Month Key" = wrE19."Fiscal Month Key"
-)
+    SELECT
+        fm.fiscal_month_key         AS "Fiscal Month Key",
+        fm.period_number            AS "Fiscal Month",
+        fm.begin_date               AS "Fiscal Month Begin Date",
+        fm.end_date                 AS "Fiscal Month End Date",
+        CASE
+            WHEN fm.period_number < 10
+                THEN CONCAT(CONCAT(CONCAT(fy.name,'-'),'0'),CAST(fm.period_number AS varchar(4)))
+            ELSE CONCAT(CONCAT(fy.name,'-'),CAST(fm.period_number AS varchar(4)))
+        END                         AS "Fiscal Period",
+        CASE
+            WHEN fm.period_number IN (1,2,3) THEN 'Q1'
+            WHEN fm.period_number IN (4,5,6) THEN 'Q2'
+            WHEN fm.period_number IN (7,8,9) THEN 'Q3'
+            WHEN fm.period_number IN (10,11,12) THEN 'Q4'
+        END                         AS "Fiscal Quarter",
+        fq.begin_date               AS "Fiscal Quarter Begin Date",
+        fq.end_date                 AS "Fiscal Quarter End Date",
+        fy.name                     AS "Fiscal Year",
+        fy.begin_date               AS "Fiscal Year Begin Date",
+        fy.end_date                 AS "Fiscal Year End Date"
+    FROM [dbo].["aretum"."fiscal_month"] fm
+    JOIN [dbo].["aretum"."fiscal_year"] fy ON fy.fiscal_year_key = fm.fiscal_year_key
+    JOIN [dbo].["aretum"."fiscal_quarter"] fq ON fq.fiscal_quarter_key = fm.fiscal_quarter_key
+) wrE19 ON (wrE20."Fiscal Month Key" = wrE19."Fiscal Month Key")
 LEFT OUTER JOIN (
-    with intercompany_support as (
-        select
-            pi.project_key,
-            STRING_AGG(org.customer_name, ', ') as pi_list
-        from project_intercompany pi
-        left join customer org on org.customer_key= pi.ic_org
-        group by pi.project_key
-    )
-    select
-        proj.project_key                      as "Project Key",
-        proj.customer_key                     as "Customer Key",
-        proj.owning_customer_key              as "Owning Cust Key",
-        pra.billing_manager_open              as "Billing Mgr Open",
-        pra.billing_viewer_open               as "Billing Viewer Open",
-        pra.project_po_viewer_open            as "Proj PO Viewer Open",
-        pra.project_pr_viewer_open            as "Proj PR Viewer Open",
-        pra.project_document_viewer_open      as "Proj Doc Viewer Open",
-        pra.project_manager_open              as "Proj Mgr Open",
-        pra.project_viewer_open               as "Proj Viewer Open",
-        pra.resource_assigner_open            as "Res Assigner Open",
-        pra.resource_planner_open             as "Res Planner Open",
-        pra.resource_requestor_open           as "Res Requestor Open",
-        proj.expense_assignment_flag          as "Expense Assign Flag",
-        proj.future_charge                    as "Future Charge",
-        proj.item_assignment_flag             as "Item Assign Flag",
-        proj.time_assignment_flag             as "Time Assign Flag",
-        case proj.bill_rate_source
-            when 'P' then 'P - Person Bill Rate'
-            when 'L' then 'L - Labor Category Bill Rate'
-        end                                   as "Proj Bill Rate Source",
-        bt.code                               as "Proj Billing Type Code",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,37,39))
-            then proj.Exp_Bill_Budget else null end                                  as "Proj Budget Exp Bill Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.exp_cost_burden_budget else null end                           as "Proj Budget Exp Burdened Cost",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.exp_cost_budget else null end                                  as "Proj Budget Exp Cost Amt",
-        proj.hours_budget                     as "Proj Budget Hours",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,37,39))
-            then proj.labor_bill_budget else null end                                as "Proj Budget Lab Bill Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.labor_cost_burden_budget else null end                         as "Proj Budget Lab Burd Cost",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.Labor_Cost_Budget else null end                                as "Proj Budget Lab Cost Amt",
-        proj.project_code                      as "Project Code",
-        proj.purpose                           as "Purpose",
-        proj.completed_date                    as "Completed Date",
-        proj.project_color                     as "Project Color",
-        case proj.cost_rate_source
-            when 'P' then 'P - Person Cost Rate'
-            when 'L' then 'L - Labor Category Cost Rate'
-        end                                    as "Proj Cost Rate Source",
-        cs.cost_structure                      as "Cost Structure",
-        loc.location_name                      as "Location",
-        pc.pay_code                            as "Pay Code",
-        proj.leave_balance                     as "Leave Balance",
-        proj.Enforce_Wbs_Dates                 as "Enforce Wbs Dates",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,37,39))
-            then proj.exp_bill_est_tot else null end                                 as "Proj Est Tot Exp Bill Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.exp_cost_est_tot else null end                                 as "Proj Est Tot Exp Cost Amt",
-        proj.hours_est_tot                     as "Proj Est Total",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,37,39))
-            then proj.labor_bill_est_tot else null end                               as "Proj Est Tot Lab Bill Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.labor_cost_est_tot else null end                               as "Proj Est Tot Lab Cost Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,37,39))
-            then proj.Exp_Bill_Etc else null end                                     as "Proj ETC Exp Bill Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.exp_cost_etc else null end                                     as "Proj ETC Exp Cost Amt",
-        proj.hours_etc                          as "Proj ETC Hours",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,37,39))
-            then proj.labor_bill_etc else null end                                   as "Proj ETC Lab Bill Amt",
-        case when exists(select person_key from member where person_key = '3896' and role_key in (1,21,38,40))
-            then proj.labor_cost_etc else null end                                   as "Proj ETC Labor Cost Amount",
-        proj.er_task_required                   as "ER Task Reqd",
-        proj.Account_Number                     as "Account Number",
-        coalesce(proj.funded_value, proj.orig_funded_value) as "Funded Value",
-        proj.item_task_required                 as "Item Task Reqd",
-        cle.customer_code                       as "Proj Legal Entity Code",
-        cle.customer_name                       as "Proj Legal Entity Name",
-        proj.limit_bill_to_funded               as "Proj Limit Bill to Funded",
-        proj.limit_rev_to_funded                as "Proj Limit Rev to Funded",
-        proj.location_required                  as "Location Reqd",
-        proj.task_level_assignment              as "Task Level Assignment",
-        perm.last_name                          as "Proj Manager Last Name",
-        perm.first_name                         as "Proj Manager First Name",
-        perm.middle_initial                     as "Proj Manager Middle Initial",
-        perm.username                           as "Proj Manager Username",
-        perm.email                              as "Proj Manager Email",
-        perl.last_name                          as "Proj Lead Last Name",
-        perl.first_name                         as "Proj Lead First Name",
-        perl.middle_initial                     as "Proj Lead Middle Initial",
-        perl.username                           as "Proj Lead Username",
-        perl.email                              as "Proj Lead Email",
-        perv.last_name                          as "Proj Viewer Last Name",
-        perv.first_name                         as "Proj Viewer First Name",
-        perv.middle_initial                     as "Proj Viewer Middle Initial",
-        perv.username                           as "Proj Viewer Username",
-        perv.email                              as "Proj Viewer Email",
-        c.customer_code                         as "Proj Org Code",
-        c.customer_name                         as "Proj Org Name",
-        proj.orig_end_date                      as "Original End Date",
-        proj.orig_start_date                    as "Original Start Date",
-        coo.customer_code                       as "Proj Owning Org Code",
-        coo.customer_name                       as "Proj Owning Org Name",
-        proj.percent_complete                   as "Percent Complete",
-        proj.pct_complete_rule                  as "Percent Complete Rule",
-        proj.exp_sub_po_required                as "Exp Sub PO Reqd",
-        proj.ts_sub_po_required                 as "Ts Sub PO Reqd",
-        pg.posting_group_name                   as "Posting Group Name",
-        proj.probability_percent                as "Probability Percent",
-        proj.use_labor_category                 as "Use Labor Category",
-        proj.proj_require_time_comments         as "Proj Require Time Comments",
-        proj.rev_end_date                       as "Rev End Date",
-        proj.rev_start_date                     as "Rev Start Date",
-        proj.self_assign_plans                  as "Self Assign Plans",
-        proj.allow_self_plan                    as "Allow Self Plan",
-        proj.assignment_flag                    as "Assignment Flag",
-        ps.status                               as "Status",
-        proj.ts_task_required                   as "Ts Task Reqd",
-        proj.title                              as "Title",
-        proj.tito_required                      as "Tito Reqd",
-        coalesce(proj.total_value, proj.orig_total_value)  as "Total Value",
-        pt.project_type                         as "Project Type",
-        proj.user01                             as "Proj UDF 01",
-        proj.user02                             as "Proj UDF 02",
-        proj.user03                             as "Proj UDF 03",
-        proj.user04                             as "Proj UDF 04",
-        proj.user05                             as "Proj UDF 05",
-        proj.user06                             as "Proj UDF 06",
-        proj.user07                             as "Proj UDF 07",
-        proj.user08                             as "Proj UDF 08",
-        proj.user09                             as "Proj UDF 09",
-        proj.user10                             as "Proj UDF 10",
-        proj.user11                             as "Proj UDF 11",
-        proj.user12                             as "Proj UDF 12",
-        proj.user13                             as "Proj UDF 13",
-        proj.user14                             as "Proj UDF 14",
-        proj.user15                             as "Proj UDF 15",
-        proj.user16                             as "Proj UDF 16",
-        proj.user17                             as "Proj UDF 17",
-        proj.user18                             as "Proj UDF 18",
-        proj.user19                             as "Proj UDF 19",
-        proj.user20                             as "Proj UDF 20",
-        proj.orig_total_value                   as "Total Value - Original",
-        proj.orig_funded_value                  as "Funded Value - Original",
-        cn.contract_code                        as "Contract Code",
-        cn.contract_key                         as "Contract Key",
-        cn.contract_title                       as "Contract Title",
-        coalesce(mcn.contract_code, cn.contract_code)   as "Master Contract Code",
-        coalesce(mcn.contract_title, cn.contract_title) as "Master Contract Title",
-        coalesce(proj.total_cost, proj.orig_total_cost) as "Total Cost - Current",
-        proj.orig_total_cost                    as "Total Cost - Original",
-        coalesce(proj.total_fee, proj.orig_total_fee)   as "Total Fee - Current",
-        proj.orig_total_fee                     as "Total Fee - Original",
-        coalesce(proj.funded_cost, proj.orig_funded_cost) as "Funded Cost - Current",
-        proj.orig_funded_cost                   as "Funded Cost - Original",
-        coalesce(proj.funded_fee, proj.orig_funded_fee) as "Funded Fee - Current",
-        proj.orig_funded_fee                    as "Funded Fee - Original",
-        case when i_s.project_key is null then 'N' else 'Y' end as "Intercompany Effort",
-        i_s.pi_list                             as "Intercompany Support",
-        case when ce.code is not null then concat(concat(cs.cost_structure,'-'),ce.code ) else null end as "Default Labor Cost Element",
-        proj.created                            as "Project Created Date",
-        fm.fee_method                           as "Project Fee Method",
-        pf.fee_factor                           as "Project Fee Factor",
-        pf.fee_factor_type                      as "Project Fee Factor Type",
-        pf.fixed_fee_amount                     as "Fixed Fee Amount",
-        proj.advanced_costing_flag              as "Advanced Costing Yes or No",
-        ooc.iso_currency_code                   as "Project Owning Org Currency Code"
-    from project proj
-    join customer c on c.customer_key = proj.customer_key
-    left outer join customer coo on coo.customer_key = proj.owning_customer_key
-    left outer join customer_type ctp on ctp.customer_type_key = c.customer_type_key
-    left outer join billing_type bt on bt.billing_type_key = proj.billing_type_key
-    left outer join cost_struct cs on cs.cost_struct_key = proj.cost_struct_key
-    left outer join location loc on loc.location_key = proj.location_key
-    left outer join pay_code pc on pc.pay_code_key = proj.pay_code_key
-    left outer join project_open_access_view pra on pra.project_key = proj.project_key
-    left outer join project_controller pcm on pcm.project_key = proj.project_key and pcm.role_key = 3 and pcm.primary_ind = 'Y'
-    left outer join project_controller pcl on pcl.project_key = proj.project_key and pcl.role_key = 12 and pcl.primary_ind = 'Y'
-    left outer join project_controller pcv on pcv.project_key = proj.project_key and pcv.role_key = 14 and pcv.primary_ind = 'Y'
-    left outer join posting_group pg on pg.posting_group_key = proj.posting_group_key
-    join project_status ps on ps.project_status_key = proj.project_status_key
-    join project_type pt on pt.project_type_key = proj.project_type_key
-    left outer join person perm on perm.person_key = pcm.person_key
-    left outer join person perl on perl.person_key = pcl.person_key
-    left outer join person perv on perv.person_key = pcv.person_key
-    left outer join org_tree ot on ot.node_key = proj.customer_key
-    left outer join customer col on col.customer_key = coo.legal_entity_key
-    left outer join customer cle on cle.customer_key = col.customer_key
-    left outer join contract cn on cn.contract_key = proj.contract_key
-    left outer join contract mcn on cn.prime_contract_key = mcn.contract_key
-    left outer join intercompany_support i_s on i_s.project_key = proj.project_key
-    left outer join cost_struct_labor csl on csl.cost_struct_labor_key = proj.ic_cost_struct_labor_key
-    left outer join cost_element ce on ce.cost_element_key = csl.cost_element_key
-    left outer join project_fee pf on pf.project_key = proj.project_key
-        and pf.fee_method_key in (
-            select pfi.fee_method_key as fee_method_key
-            from project_fee pfi
-            inner join fee_method fmi on fmi.fee_method_key = pfi.fee_method_key
-                and pfi.project_key  = proj.project_key
-            order by fmi.fee_method asc
-            fetch first 1 row only
+    SELECT
+        proj.project_key                      AS "Project Key",
+        proj.customer_key                     AS "Customer Key",
+        proj.owning_customer_key              AS "Owning Cust Key",
+        pra.billing_manager_open              AS "Billing Mgr Open",
+        pra.billing_viewer_open               AS "Billing Viewer Open",
+        pra.project_po_viewer_open            AS "Proj PO Viewer Open",
+        pra.project_pr_viewer_open            AS "Proj PR Viewer Open",
+        pra.project_document_viewer_open      AS "Proj Doc Viewer Open",
+        pra.project_manager_open              AS "Proj Mgr Open",
+        pra.project_viewer_open               AS "Proj Viewer Open",
+        pra.resource_assigner_open            AS "Res Assigner Open",
+        pra.resource_planner_open             AS "Res Planner Open",
+        pra.resource_requestor_open           AS "Res Requestor Open",
+        proj.expense_assignment_flag          AS "Expense Assign Flag",
+        proj.future_charge                    AS "Future Charge",
+        proj.item_assignment_flag             AS "Item Assign Flag",
+        proj.time_assignment_flag             AS "Time Assign Flag",
+        CASE proj.bill_rate_source
+            WHEN 'P' THEN 'P - Person Bill Rate'
+            WHEN 'L' THEN 'L - Labor Category Bill Rate'
+        END                                   AS "Proj Bill Rate Source",
+        bt.code                               AS "Proj Billing Type Code",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,37,39))
+            THEN proj.Exp_Bill_Budget ELSE NULL END                                  AS "Proj Budget Exp Bill Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.exp_cost_burden_budget ELSE NULL END                           AS "Proj Budget Exp Burdened Cost",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.exp_cost_budget ELSE NULL END                                  AS "Proj Budget Exp Cost Amt",
+        proj.hours_budget                     AS "Proj Budget Hours",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,37,39))
+            THEN proj.labor_bill_budget ELSE NULL END                                AS "Proj Budget Lab Bill Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.labor_cost_burden_budget ELSE NULL END                         AS "Proj Budget Lab Burd Cost",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.Labor_Cost_Budget ELSE NULL END                                AS "Proj Budget Lab Cost Amt",
+        proj.project_code                      AS "Project Code",
+        proj.purpose                           AS "Purpose",
+        proj.completed_date                    AS "Completed Date",
+        proj.project_color                     AS "Project Color",
+        CASE proj.cost_rate_source
+            WHEN 'P' THEN 'P - Person Cost Rate'
+            WHEN 'L' THEN 'L - Labor Category Cost Rate'
+        END                                    AS "Proj Cost Rate Source",
+        cs.cost_structure                      AS "Cost Structure",
+        loc.location_name                      AS "Location",
+        pc.pay_code                            AS "Pay Code",
+        proj.leave_balance                     AS "Leave Balance",
+        proj.Enforce_Wbs_Dates                 AS "Enforce Wbs Dates",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,37,39))
+            THEN proj.exp_bill_est_tot ELSE NULL END                                 AS "Proj Est Tot Exp Bill Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.exp_cost_est_tot ELSE NULL END                                 AS "Proj Est Tot Exp Cost Amt",
+        proj.hours_est_tot                     AS "Proj Est Total",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,37,39))
+            THEN proj.labor_bill_est_tot ELSE NULL END                               AS "Proj Est Tot Lab Bill Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.labor_cost_est_tot ELSE NULL END                               AS "Proj Est Tot Lab Cost Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,37,39))
+            THEN proj.Exp_Bill_Etc ELSE NULL END                                     AS "Proj ETC Exp Bill Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.exp_cost_etc ELSE NULL END                                     AS "Proj ETC Exp Cost Amt",
+        proj.hours_etc                          AS "Proj ETC Hours",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,37,39))
+            THEN proj.labor_bill_etc ELSE NULL END                                   AS "Proj ETC Lab Bill Amt",
+        CASE WHEN EXISTS(SELECT person_key FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21,38,40))
+            THEN proj.labor_cost_etc ELSE NULL END                                   AS "Proj ETC Labor Cost Amount",
+        proj.er_task_required                   AS "ER Task Reqd",
+        proj.Account_Number                     AS "Account Number",
+        COALESCE(proj.funded_value, proj.orig_funded_value) AS "Funded Value",
+        proj.item_task_required                 AS "Item Task Reqd",
+        cle.customer_code                       AS "Proj Legal Entity Code",
+        cle.customer_name                       AS "Proj Legal Entity Name",
+        proj.limit_bill_to_funded               AS "Proj Limit Bill to Funded",
+        proj.limit_rev_to_funded                AS "Proj Limit Rev to Funded",
+        proj.location_required                  AS "Location Reqd",
+        proj.task_level_assignment              AS "Task Level Assignment",
+        perm.last_name                          AS "Proj Manager Last Name",
+        perm.first_name                         AS "Proj Manager First Name",
+        perm.middle_initial                     AS "Proj Manager Middle Initial",
+        perm.username                           AS "Proj Manager Username",
+        perm.email                              AS "Proj Manager Email",
+        perl.last_name                          AS "Proj Lead Last Name",
+        perl.first_name                         AS "Proj Lead First Name",
+        perl.middle_initial                     AS "Proj Lead Middle Initial",
+        perl.username                           AS "Proj Lead Username",
+        perl.email                              AS "Proj Lead Email",
+        perv.last_name                          AS "Proj Viewer Last Name",
+        perv.first_name                         AS "Proj Viewer First Name",
+        perv.middle_initial                     AS "Proj Viewer Middle Initial",
+        perv.username                           AS "Proj Viewer Username",
+        perv.email                              AS "Proj Viewer Email",
+        c.customer_code                         AS "Proj Org Code",
+        c.customer_name                         AS "Proj Org Name",
+        proj.orig_end_date                      AS "Original End Date",
+        proj.orig_start_date                    AS "Original Start Date",
+        coo.customer_code                       AS "Proj Owning Org Code",
+        coo.customer_name                       AS "Proj Owning Org Name",
+        proj.percent_complete                   AS "Percent Complete",
+        proj.pct_complete_rule                  AS "Percent Complete Rule",
+        proj.exp_sub_po_required                AS "Exp Sub PO Reqd",
+        proj.ts_sub_po_required                 AS "Ts Sub PO Reqd",
+        pg.posting_group_name                   AS "Posting Group Name",
+        proj.probability_percent                AS "Probability Percent",
+        proj.use_labor_category                 AS "Use Labor Category",
+        proj.proj_require_time_comments         AS "Proj Require Time Comments",
+        proj.rev_end_date                       AS "Rev End Date",
+        proj.rev_start_date                     AS "Rev Start Date",
+        proj.self_assign_plans                  AS "Self Assign Plans",
+        proj.allow_self_plan                    AS "Allow Self Plan",
+        proj.assignment_flag                    AS "Assignment Flag",
+        ps.status                               AS "Status",
+        proj.ts_task_required                   AS "Ts Task Reqd",
+        proj.title                              AS "Title",
+        proj.tito_required                      AS "Tito Reqd",
+        COALESCE(proj.total_value, proj.orig_total_value)  AS "Total Value",
+        pt.project_type                         AS "Project Type",
+        proj.user01                             AS "Proj UDF 01",
+        proj.user02                             AS "Proj UDF 02",
+        proj.user03                             AS "Proj UDF 03",
+        proj.user04                             AS "Proj UDF 04",
+        proj.user05                             AS "Proj UDF 05",
+        proj.user06                             AS "Proj UDF 06",
+        proj.user07                             AS "Proj UDF 07",
+        proj.user08                             AS "Proj UDF 08",
+        proj.user09                             AS "Proj UDF 09",
+        proj.user10                             AS "Proj UDF 10",
+        proj.user11                             AS "Proj UDF 11",
+        proj.user12                             AS "Proj UDF 12",
+        proj.user13                             AS "Proj UDF 13",
+        proj.user14                             AS "Proj UDF 14",
+        proj.user15                             AS "Proj UDF 15",
+        proj.user16                             AS "Proj UDF 16",
+        proj.user17                             AS "Proj UDF 17",
+        proj.user18                             AS "Proj UDF 18",
+        proj.user19                             AS "Proj UDF 19",
+        proj.user20                             AS "Proj UDF 20",
+        proj.orig_total_value                   AS "Total Value - Original",
+        proj.orig_funded_value                  AS "Funded Value - Original",
+        cn.contract_code                        AS "Contract Code",
+        cn.contract_key                         AS "Contract Key",
+        cn.contract_title                       AS "Contract Title",
+        COALESCE(mcn.contract_code, cn.contract_code)   AS "Master Contract Code",
+        COALESCE(mcn.contract_title, cn.contract_title) AS "Master Contract Title",
+        COALESCE(proj.total_cost, proj.orig_total_cost) AS "Total Cost - Current",
+        proj.orig_total_cost                    AS "Total Cost - Original",
+        COALESCE(proj.total_fee, proj.orig_total_fee)   AS "Total Fee - Current",
+        proj.orig_total_fee                     AS "Total Fee - Original",
+        COALESCE(proj.funded_cost, proj.orig_funded_cost) AS "Funded Cost - Current",
+        proj.orig_funded_cost                   AS "Funded Cost - Original",
+        COALESCE(proj.funded_fee, proj.orig_funded_fee) AS "Funded Fee - Current",
+        proj.orig_funded_fee                    AS "Funded Fee - Original",
+        CASE WHEN i_s.project_key IS NULL THEN 'N' ELSE 'Y' END AS "Intercompany Effort",
+        i_s.pi_list                             AS "Intercompany Support",
+        CASE WHEN ce.code IS NOT NULL THEN CONCAT(cs.cost_structure,'-',ce.code ) ELSE NULL END AS "Default Labor Cost Element",
+        proj.created                            AS "Project Created Date",
+        fm.fee_method                           AS "Project Fee Method",
+        pf.fee_factor                           AS "Project Fee Factor",
+        pf.fee_factor_type                      AS "Project Fee Factor Type",
+        pf.fixed_fee_amount                     AS "Fixed Fee Amount",
+        proj.advanced_costing_flag              AS "Advanced Costing Yes or No",
+        ooc.iso_currency_code                   AS "Project Owning Org Currency Code"
+    FROM [dbo].["aretum"."project"] proj
+    JOIN [dbo].["aretum"."customer"] c ON c.customer_key = proj.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] coo ON coo.customer_key = proj.owning_customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer_type"] ctp ON ctp.customer_type_key = c.customer_type_key
+    LEFT OUTER JOIN [dbo].["aretum"."billing_type"] bt ON bt.billing_type_key = proj.billing_type_key
+    LEFT OUTER JOIN [dbo].["aretum"."cost_struct"] cs ON cs.cost_struct_key = proj.cost_struct_key
+    LEFT OUTER JOIN [dbo].["aretum"."location"] loc ON loc.location_key = proj.location_key
+    LEFT OUTER JOIN [dbo].["aretum"."pay_code"] pc ON pc.pay_code_key = proj.pay_code_key
+    LEFT OUTER JOIN [dbo].["aretum"."project_open_access_view"] pra ON pra.project_key = proj.project_key
+    LEFT OUTER JOIN [dbo].["aretum"."project_controller"] pcm ON pcm.project_key = proj.project_key AND pcm.role_key = 3 AND pcm.primary_ind = 'Y'
+    LEFT OUTER JOIN [dbo].["aretum"."project_controller"] pcl ON pcl.project_key = proj.project_key AND pcl.role_key = 12 AND pcl.primary_ind = 'Y'
+    LEFT OUTER JOIN [dbo].["aretum"."project_controller"] pcv ON pcv.project_key = proj.project_key AND pcv.role_key = 14 AND pcv.primary_ind = 'Y'
+    LEFT OUTER JOIN [dbo].["aretum"."posting_group"] pg ON pg.posting_group_key = proj.posting_group_key
+    JOIN [dbo].["aretum"."project_status"] ps ON ps.project_status_key = proj.project_status_key
+    JOIN [dbo].["aretum"."project_type"] pt ON pt.project_type_key = proj.project_type_key
+    LEFT OUTER JOIN [dbo].["aretum"."person"] perm ON perm.person_key = pcm.person_key
+    LEFT OUTER JOIN [dbo].["aretum"."person"] perl ON perl.person_key = pcl.person_key
+    LEFT OUTER JOIN [dbo].["aretum"."person"] perv ON perv.person_key = pcv.person_key
+    LEFT OUTER JOIN [dbo].["aretum"."org_tree"] ot ON ot.node_key = proj.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] col ON col.customer_key = coo.legal_entity_key
+    LEFT OUTER JOIN [dbo].["aretum"."customer"] cle ON cle.customer_key = col.customer_key
+    LEFT OUTER JOIN [dbo].["aretum"."contract"] cn ON cn.contract_key = proj.contract_key
+    LEFT OUTER JOIN [dbo].["aretum"."contract"] mcn ON cn.prime_contract_key = mcn.contract_key
+    LEFT OUTER JOIN intercompany_support i_s ON i_s.project_key = proj.project_key
+    LEFT OUTER JOIN [dbo].["aretum"."cost_struct_labor"] csl ON csl.cost_struct_labor_key = proj.ic_cost_struct_labor_key
+    LEFT OUTER JOIN [dbo].["aretum"."cost_element"] ce ON ce.cost_element_key = csl.cost_element_key
+    LEFT OUTER JOIN [dbo].["aretum"."project_fee"] pf
+           ON pf.project_key = proj.project_key
+          AND pf.fee_method_key IN (
+                SELECT TOP (1) pfi.fee_method_key
+                FROM [dbo].["aretum"."project_fee"] pfi
+                INNER JOIN [dbo].["aretum"."fee_method"] fmi
+                    ON fmi.fee_method_key = pfi.fee_method_key
+                   AND pfi.project_key  = proj.project_key
+                ORDER BY fmi.fee_method ASC
+          )
+    LEFT OUTER JOIN [dbo].["aretum"."fee_method"] fm ON fm.fee_method_key = pf.fee_method_key
+    LEFT OUTER JOIN [dbo].["aretum"."currency_code"] ooc ON ooc.currency_code_key = coo.currency_code_key
+    WHERE
+        (EXISTS (SELECT 'x' FROM [dbo].["aretum"."member"] WHERE person_key = '3896' AND role_key IN (1,21)))
+        OR EXISTS (
+            SELECT 'x'
+            FROM [dbo].["aretum"."project_controller"] pc
+            WHERE pc.project_key = proj.project_key
+              AND pc.person_key = '3896'
+              AND pc.role_key IN (3, 14, 19, 20, 15, 18, 17)
         )
-    left outer join fee_method fm on fm.fee_method_key = pf.fee_method_key
-    left outer join currency_code ooc on ooc.currency_code_key = coo.currency_code_key
-    where
-        (exists (select 'x' from member where person_key = '3896' and role_key IN (1,21)))
-        or exists (
-            select 'x'
-            from project_controller pc
-            where pc.project_key = proj.project_key
-              and pc.person_key = '3896'
-              and pc.role_key in (3, 14, 19, 20, 15, 18, 17)
+        OR EXISTS (
+            SELECT 'x'
+            FROM [dbo].["aretum"."project_controller"] pc
+            JOIN [dbo].["aretum"."alternate"] a ON a.person_key = pc.person_key AND a.role_key = pc.role_key
+            WHERE pc.project_key = proj.project_key
+              AND pc.primary_ind = 'Y'
+              AND a.alternate_key = '3896'
+              AND pc.role_key IN (3, 14, 19, 20, 15, 18, 17)
         )
-        or exists (
-            select 'x'
-            from project_controller pc
-            join alternate a on a.person_key = pc.person_key and a.role_key = pc.role_key
-            where pc.project_key = proj.project_key
-              and pc.primary_ind = 'Y'
-              and a.alternate_key = '3896'
-              and pc.role_key in (3, 14, 19, 20, 15, 18, 17)
-        )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.billing_viewer_open = 'Y'
-                  and pra.project_key = proj.project_key
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.billing_viewer_open = 'Y'
+                  AND pra.project_key = proj.project_key
             )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 20
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 20
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 20
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 20
                 )
             )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 20
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 20
                 )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 20
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 20
                 )
             )
         )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.billing_manager_open = 'Y'
-                  and pra.project_key = proj.project_key
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.billing_manager_open = 'Y'
+                  AND pra.project_key = proj.project_key
             )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 19
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 19
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 19
-                )
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 19
-                )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 19
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 19
                 )
             )
-        )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.project_viewer_open = 'Y'
-                  and pra.project_key = proj.project_key
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 14
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 19
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 14
-                )
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 14
-                )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 14
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 19
                 )
             )
         )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.project_manager_open = 'Y'
-                  and pra.project_key = proj.project_key
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.project_viewer_open = 'Y'
+                  AND pra.project_key = proj.project_key
             )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 3
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 14
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 3
-                )
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 3
-                )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 3
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 14
                 )
             )
-        )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.resource_planner_open = 'Y'
-                  and pra.project_key = proj.project_key
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 15
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 14
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 15
-                )
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 15
-                )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 15
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 14
                 )
             )
         )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.resource_assigner_open = 'Y'
-                  and pra.project_key = proj.project_key
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.project_manager_open = 'Y'
+                  AND pra.project_key = proj.project_key
             )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 18
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 3
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 18
-                )
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 18
-                )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 18
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 3
                 )
             )
-        )
-        or (
-            exists (
-                select pra.project_key
-                from project_open_access_view pra
-                where pra.resource_requestor_open = 'Y'
-                  and pra.project_key = proj.project_key
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 17
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 3
                 )
-                or proj.customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 1
-                      and oap.role_key = 17
-                )
-            )
-            and (
-                exists (
-                    select 'x'
-                    from org_access_person oap
-                    where oap.global_access = 'Y'
-                      and oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 17
-                )
-                or proj.owning_customer_key in (
-                    select h.customer_key
-                    from org_access_hierarchy h
-                    join org_access_person oap on oap.org_access_person_key = h.org_access_person_key
-                    where oap.person_key = '3896'
-                      and oap.access_type = 4
-                      and oap.role_key = 17
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 3
                 )
             )
         )
-        or exists (
-            select 'x'
-            from project_controller pc
-            where pc.project_key = proj.project_key
-              and pc.person_key = '3896'
-              and pc.role_key in (12, 13)
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.resource_planner_open = 'Y'
+                  AND pra.project_key = proj.project_key
+            )
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 15
+                )
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 15
+                )
+            )
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 15
+                )
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 15
+                )
+            )
         )
-        or exists (
-            select 'x'
-            from project_controller pc
-            join alternate a on a.person_key = pc.person_key and a.role_key = pc.role_key
-            where pc.project_key = proj.project_key
-              and pc.primary_ind = 'Y'
-              and a.alternate_key = '3896'
-              and pc.role_key in (12, 13)
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.resource_assigner_open = 'Y'
+                  AND pra.project_key = proj.project_key
+            )
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 18
+                )
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 18
+                )
+            )
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 18
+                )
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 18
+                )
+            )
         )
-) wrE4 ON (
-    wrE20."Project Key" = wrE4."Project Key"
-)
-WHERE
-    (wrE8."CUSTOMER_CODE" LIKE '%DOD%'
-     AND wrE4."Title" NOT LIKE '%IDIQ%'
-     AND wrE4."Title" NOT LIKE '%BPA%'
-     AND wrE18."Acct Fin Lv6 Code" = '500000'
-     AND wrE19."Fiscal Year" = 'FY2025');
+        OR (
+            EXISTS (
+                SELECT pra.project_key
+                FROM [dbo].["aretum"."project_open_access_view"] pra
+                WHERE pra.resource_requestor_open = 'Y'
+                  AND pra.project_key = proj.project_key
+            )
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 17
+                )
+                OR proj.customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 1
+                      AND oap.role_key = 17
+                )
+            )
+            AND (
+                EXISTS (
+                    SELECT 'x'
+                    FROM [dbo].["aretum"."org_access_person"] oap
+                    WHERE oap.global_access = 'Y'
+                      AND oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 17
+                )
+                OR proj.owning_customer_key IN (
+                    SELECT h.customer_key
+                    FROM [dbo].["aretum"."org_access_hierarchy"] h
+                    JOIN [dbo].["aretum"."org_access_person"] oap ON oap.org_access_person_key = h.org_access_person_key
+                    WHERE oap.person_key = '3896'
+                      AND oap.access_type = 4
+                      AND oap.role_key = 17
+                )
+            )
+        )
+        OR EXISTS (
+            SELECT 'x'
+            FROM [dbo].["aretum"."project_controller"] pc
+            WHERE pc.project_key = proj.project_key
+              AND pc.person_key = '3896'
+              AND pc.role_key IN (12, 13)
+        )
+        OR EXISTS (
+            SELECT 'x'
+            FROM [dbo].["aretum"."project_controller"] pc
+            JOIN [dbo].["aretum"."alternate"] a ON a.person_key = pc.person_key AND a.role_key = pc.role_key
+            WHERE pc.project_key = proj.project_key
+              AND pc.primary_ind = 'Y'
+              AND a.alternate_key = '3896'
+              AND pc.role_key IN (12, 13)
+        )
+) wrE4 ON (wrE20."Project Key" = wrE4."Project Key");
+GO
