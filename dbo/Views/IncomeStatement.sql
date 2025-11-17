@@ -1,6 +1,7 @@
 CREATE VIEW [dbo].[IncomeStatement]
 AS
 SELECT 
+    [Proj Key],   --expose project key
 	wrE19.[Fiscal Period] AS "Fiscal Period",
 	wrE20.[Acct Fin Lv2 Code] AS "Acct Fin Lv2 Code",
 	wrE20.[Acct Fin Lv2 Name] AS "Acct Fin Lv2 Name",
@@ -24,6 +25,7 @@ SELECT
 	wrE19.[Fin/Budget Org Code] AS "Fin/Budget Org Code"
 FROM (
 	SELECT 
+	    MAX(x.proj_key) AS [Proj_Key], 
 		x.account_key AS [Acct Key], 
 		x.organization_key AS [Organization Key], 
 		x.fiscal_month_key AS [Fiscal Month Key], 
@@ -65,7 +67,8 @@ FROM (
 			NULL AS budget,
 			(gl.credit_amount - gl.debit_amount) AS net_amount,
 			(gl.local_credit_amount - gl.local_debit_amount) AS local_net_amount,
-			cc.iso_currency_code AS local_currency_code
+			cc.iso_currency_code AS local_currency_code,
+			gl.project_key AS [proj_key]
 		FROM [dbo].["aretum"."general_ledger"] gl
 		JOIN [dbo].["aretum"."account"] a ON a.account_key = gl.account_key
 		JOIN [dbo].["aretum"."customer"] org ON org.customer_key = gl.organization_key
@@ -100,7 +103,8 @@ FROM (
 			bd.amount AS budget,
 			CASE WHEN a.type = 'R' THEN bd.amount ELSE (bd.amount * (-1)) END AS net_amount,
 			CASE WHEN a.type = 'R' THEN bd.amount ELSE (bd.amount * (-1)) END AS local_net_amount,
-			cc.iso_currency_code AS local_currency_code
+			cc.iso_currency_code AS local_currency_code,
+			NULL AS [proj_key]
 		FROM [dbo].["aretum"."budget_detail"] bd
 		JOIN [dbo].["aretum"."account"] a ON a.account_key = bd.account_key
 		JOIN [dbo].["aretum"."budget_organization"] bo ON bo.budget_organization_key = bd.budget_organization_key
